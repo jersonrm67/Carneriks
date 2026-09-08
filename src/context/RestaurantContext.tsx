@@ -1,0 +1,473 @@
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import { Product, Order, RestaurantTable, OrderStatus, UserRole, SystemEvent, DatabaseSyncStatus } from '../types';
+import { sounds } from '../services/sound';
+
+interface CartItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  doneness?: string;
+  notes?: string;
+}
+
+interface RestaurantContextType {
+  products: Product[];
+  tables: RestaurantTable[];
+  orders: Order[];
+  role: UserRole;
+  userName: string;
+  isConnected: boolean;
+  dbStatus: DatabaseSyncStatus;
+  selectedTable: number | null;
+  cart: CartItem[];
+  isMuted: boolean;
+  activeFilter: string;
+  setRole: (role: UserRole) => void;
+  setUserName: (name: string) => void;
+  setSelectedTable: (tableNum: number | null) => void;
+  addToCart: (item: CartItem) => void;
+  removeFromCart: (index: number) => void;
+  updateCartItemQty: (index: number, delta: number) => void;
+  clearCart: () => void;
+  sendOrder: (notes?: string) => Promise<boolean>;
+  updateOrderStatus: (orderId: string, status: OrderStatus) => Promise<void>;
+  updateStock: (productId: string, stock: number, isAvailable: boolean) => Promise<void>;
+  updateTableStatus: (tableNumber: number, status: RestaurantTable['status']) => Promise<void>;
+  toggleMute: () => void;
+  resetDemoData: () => Promise<void>;
+  setActiveFilter: (filter: string) => void;
+}
+
+const RestaurantContext = createContext<RestaurantContextType | undefined>(undefined);
+
+export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [tables, setTables] = useState<RestaurantTable[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [role, setRoleState] = useState<UserRole>('waiter');
+  const [userName, setUserNameState] = useState<string>('Carlos M.');
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [selectedTable, setSelectedTable] = useState<number | null>(1);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [activeFilter, setActiveFilter] = useState<string>('all');
+  const [dbStatus, setDbStatus] = useState<DatabaseSyncStatus>({
+    connected: true,
+    driver: 'Carneriks-RealTime-Engine',
+    lastPingMs: 12,
+    activeConnections: 1,
+    totalOrdersToday: 0,
+  });
+
+  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+  const roleRef = useRef(role);
+  roleRef.current = role;
+
+  // Load saved preferences if any
+  useEffect(() => {
+    const savedRole = localStorage.getItem('carneriks_role') as UserRole;
+    if (savedRole && (savedRole === 'waiter' || savedRole === 'kitchen' || savedRole === 'admin')) {
+      setRoleState(savedRole);
+    }
+    const savedUser = localStorage.getItem('carneriks_user');
+    if (savedUser) {
+      setUserNameState(savedUser);
+    }
+  }, []);
+
+  const setRole = (newRole: UserRole) => {
+    setRoleState(newRole);
+    localStorage.setItem('carneriks_role', newRole);
+    if (newRole === 'kitchen' && userName === 'Carlos M.') {
+      setUserNameState('Chef Marco');
+      localStorage.setItem('carneriks_user', 'Chef Marco');
+    } else if (newRole === 'waiter' && userName === 'Chef Marco') {
+      setUserNameState('Carlos M.');
+      localStorage.setItem('carneriks_user', 'Carlos M.');
+    }
+  };
+
+  const setUserName = (name: string) => {
+    setUserNameState(name);
+    localStorage.setItem('carneriks_user', name);
+  };
+
+  const toggleMute = () => {
+    sounds.isMuted = !isMuted;
+    setIsMuted(!isMuted);
+  };
+
+  // Initial fetch fallback
+  const fetchSnapshot = useCallback(async () => {
+    try {
+      const [prodRes, tableRes, orderRes] = await Promise.all([
+        fetch('/api/products'),
+        fetch('/api/tables'),
+        fetch('/api/orders'),
+      ]);
+      if (prodRes.ok && tableRes.ok && orderRes.ok) {
+        const prodData = await prodRes.json();
+        const tableData = await tableRes.json();
+        const orderData = await orderRes.json();
+        setProducts(prodData);
+        setTables(tableData);
+        setOrders(orderData);
+        setIsConnected(true);
+      }
+    } catch (e) {
+      console.warn('Initial fetch waiting for server...', e);
+    }
+  }, []);
+
+  // Handle incoming system events
+  const handleSystemEvent = useCallback((event: SystemEvent) => {
+    const currentRole = roleRef.current;
+
+    switch (event.type) {
+      case 'FULL_SYNC':
+        if (event.payload) {
+          setProducts(event.payload.products || []);
+          setTables(event.payload.tables || []);
+          setOrders(event.payload.orders || []);
+          setIsConnected(true);
+        }
+        break;
+
+      case 'ORDER_CREATED': {
+        const newOrder: Order = event.payload;
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === newOrder.id)) return prev;
+          return [newOrder, ...prev];
+        });
+
+        // If in kitchen, play audible chime!
+        if (currentRole === 'kitchen') {
+          sounds.playNewOrderChime();
+        }
+        break;
+      }
+
+      case 'ORDER_STATUS_CHANGED': {
+        const updatedOrder: Order = event.payload;
+        setOrders((prev) =>
+          prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o))
+        );
+
+        // If order became ready and current user is waiter, notify waiter!
+        if (updatedOrder.status === 'ready' && currentRole === 'waiter') {
+          sounds.playOrderReadyChime();
+        }
+        break;
+      }
+
+      case 'INVENTORY_UPDATED':
+        if (Array.isArray(event.payload)) {
+          setProducts(event.payload);
+        }
+        break;
+
+      case 'TABLE_UPDATED': {
+        const updatedTable: RestaurantTable = event.payload;
+        if (updatedTable && updatedTable.number) {
+          setTables((prev) =>
+            prev.map((t) => (t.number === updatedTable.number ? updatedTable : t))
+          );
+        }
+        break;
+      }
+    }
+  }, []);
+
+  // Setup Server-Sent Events (SSE) + BroadcastChannel
+  useEffect(() => {
+    fetchSnapshot();
+
+    // Broadcast channel for instantaneous cross-tab sync in same browser
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      const channel = new BroadcastChannel('carneriks_realtime');
+      broadcastChannelRef.current = channel;
+      channel.onmessage = (msgEvent) => {
+        if (msgEvent.data) {
+          handleSystemEvent(msgEvent.data);
+        }
+      };
+    }
+
+    // Connect to Server-Sent Events
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: any = null;
+
+    function connectSSE() {
+      eventSource = new EventSource('/api/events');
+
+      eventSource.onopen = () => {
+        setIsConnected(true);
+      };
+
+      eventSource.onmessage = (e) => {
+        try {
+          const parsed = JSON.parse(e.data);
+          handleSystemEvent(parsed);
+          setIsConnected(true);
+        } catch (err) {
+          // heartbeat or ignore
+        }
+      };
+
+      eventSource.onerror = () => {
+        setIsConnected(false);
+        eventSource?.close();
+        reconnectTimeout = setTimeout(connectSSE, 3000);
+      };
+    }
+
+    connectSSE();
+
+    // Poll DB status periodically
+    const pingInterval = setInterval(async () => {
+      try {
+        const start = performance.now();
+        const res = await fetch('/api/db-status');
+        if (res.ok) {
+          const data = await res.json();
+          const latency = Math.round(performance.now() - start);
+          setDbStatus({
+            connected: true,
+            driver: data.driver,
+            lastPingMs: latency,
+            activeConnections: data.activeConnections,
+            totalOrdersToday: data.totalOrdersToday,
+          });
+        }
+      } catch (err) {}
+    }, 10000);
+
+    return () => {
+      clearInterval(pingInterval);
+      clearTimeout(reconnectTimeout);
+      eventSource?.close();
+      broadcastChannelRef.current?.close();
+    };
+  }, [fetchSnapshot, handleSystemEvent]);
+
+  // Cart operations
+  const addToCart = (item: CartItem) => {
+    sounds.playTap();
+    setCart((prev) => {
+      // Check if identical item (same product + same doneness + same notes) exists
+      const existingIdx = prev.findIndex(
+        (it) =>
+          it.productId === item.productId &&
+          it.doneness === item.doneness &&
+          (it.notes || '') === (item.notes || '')
+      );
+      if (existingIdx >= 0) {
+        const copy = [...prev];
+        copy[existingIdx].quantity += item.quantity;
+        return copy;
+      }
+      return [...prev, item];
+    });
+  };
+
+  const removeFromCart = (index: number) => {
+    sounds.playTap();
+    setCart((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const updateCartItemQty = (index: number, delta: number) => {
+    sounds.playTap();
+    setCart((prev) => {
+      const copy = [...prev];
+      const newQty = copy[index].quantity + delta;
+      if (newQty <= 0) {
+        return copy.filter((_, idx) => idx !== index);
+      }
+      copy[index].quantity = newQty;
+      return copy;
+    });
+  };
+
+  const clearCart = () => {
+    setCart([]);
+  };
+
+  // Submit order to Kitchen
+  const sendOrder = async (orderNotes?: string): Promise<boolean> => {
+    if (!selectedTable || cart.length === 0) return false;
+
+    try {
+      const payload = {
+        tableNumber: selectedTable,
+        waiterName: userName,
+        items: cart.map((c) => ({
+          productId: c.productId,
+          quantity: c.quantity,
+          doneness: c.doneness,
+          notes: c.notes,
+        })),
+        notes: orderNotes,
+      };
+
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        const created: Order = await res.json();
+        // Optimistically notify local broadcast channel
+        const evt: SystemEvent = {
+          type: 'ORDER_CREATED',
+          payload: created,
+          timestamp: new Date().toISOString(),
+        };
+        broadcastChannelRef.current?.postMessage(evt);
+        handleSystemEvent(evt);
+
+        sounds.playNewOrderChime();
+        clearCart();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('Failed to send order:', e);
+      return false;
+    }
+  };
+
+  // Kitchen change order status
+  const updateOrderStatus = async (orderId: string, status: OrderStatus) => {
+    try {
+      // Optimistic update
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, status } : o))
+      );
+
+      const res = await fetch(`/api/orders/${orderId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+
+      if (res.ok) {
+        const updated: Order = await res.json();
+        const evt: SystemEvent = {
+          type: 'ORDER_STATUS_CHANGED',
+          payload: updated,
+          timestamp: new Date().toISOString(),
+        };
+        broadcastChannelRef.current?.postMessage(evt);
+        handleSystemEvent(evt);
+        sounds.playTap();
+      }
+    } catch (e) {
+      console.error('Failed to update order status:', e);
+    }
+  };
+
+  // Stock management
+  const updateStock = async (productId: string, stock: number, isAvailable: boolean) => {
+    try {
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, stock, isAvailable } : p))
+      );
+
+      const res = await fetch(`/api/products/${productId}/stock`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock, isAvailable }),
+      });
+
+      if (res.ok) {
+        const updatedProd: Product = await res.json();
+        const updatedList = products.map((p) => (p.id === updatedProd.id ? updatedProd : p));
+        const evt: SystemEvent = {
+          type: 'INVENTORY_UPDATED',
+          payload: updatedList,
+          timestamp: new Date().toISOString(),
+        };
+        broadcastChannelRef.current?.postMessage(evt);
+      }
+    } catch (e) {
+      console.error('Failed to update stock:', e);
+    }
+  };
+
+  // Table status update
+  const updateTableStatus = async (tableNumber: number, status: RestaurantTable['status']) => {
+    try {
+      const res = await fetch(`/api/tables/${tableNumber}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        const evt: SystemEvent = {
+          type: 'TABLE_UPDATED',
+          payload: updated,
+          timestamp: new Date().toISOString(),
+        };
+        broadcastChannelRef.current?.postMessage(evt);
+        handleSystemEvent(evt);
+      }
+    } catch (e) {
+      console.error('Failed to update table:', e);
+    }
+  };
+
+  const resetDemoData = async () => {
+    try {
+      await fetch('/api/demo/reset', { method: 'POST' });
+      await fetchSnapshot();
+      sounds.playTap();
+    } catch (e) {
+      console.error('Failed to reset demo:', e);
+    }
+  };
+
+  return (
+    <RestaurantContext.Provider
+      value={{
+        products,
+        tables,
+        orders,
+        role,
+        userName,
+        isConnected,
+        dbStatus,
+        selectedTable,
+        cart,
+        isMuted,
+        activeFilter,
+        setRole,
+        setUserName,
+        setSelectedTable,
+        addToCart,
+        removeFromCart,
+        updateCartItemQty,
+        clearCart,
+        sendOrder,
+        updateOrderStatus,
+        updateStock,
+        updateTableStatus,
+        toggleMute,
+        resetDemoData,
+        setActiveFilter,
+      }}
+    >
+      {children}
+    </RestaurantContext.Provider>
+  );
+};
+
+export const useRestaurant = () => {
+  const context = useContext(RestaurantContext);
+  if (!context) {
+    throw new Error('useRestaurant must be used within a RestaurantProvider');
+  }
+  return context;
+};
