@@ -160,3 +160,38 @@ export async function pingFirestore(): Promise<{ ok: boolean; message: string }>
     return { ok: false, message: lastError || 'Error' };
   }
 }
+
+/**
+ * Sync entire snapshot of products, tables, and orders to Firestore
+ */
+export async function syncAllToFirestore({
+  products,
+  tables,
+  orders,
+}: {
+  products: Product[];
+  tables: RestaurantTable[];
+  orders: Order[];
+}): Promise<{ productsSynced: number; tablesSynced: number; ordersSynced: number }> {
+  let productsSynced = 0;
+  let tablesSynced = 0;
+  let ordersSynced = 0;
+
+  for (const prod of products) {
+    const ok = await syncProductToFirestore(prod);
+    if (ok) productsSynced++;
+  }
+
+  for (const tbl of tables) {
+    const ok = await syncTableToFirestore(tbl);
+    if (ok) tablesSynced++;
+  }
+
+  for (const ord of orders) {
+    const ok = await syncOrderToFirestore(ord);
+    if (ok) ordersSynced++;
+  }
+
+  return { productsSynced, tablesSynced, ordersSynced };
+}
+

@@ -49,6 +49,23 @@ interface RestaurantContextType {
   login: (usuario: string, contrasena: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   setOrderErrorMessage: (msg: string | null) => void;
+  createProduct: (data: {
+    name: string;
+    category: string;
+    price: number;
+    stock: number;
+    description?: string;
+    supportsDoneness?: boolean;
+    cutWeight?: string;
+    badge?: string;
+    stockMinimo?: number;
+  }) => Promise<Product | null>;
+  updateProduct: (id: string, data: any) => Promise<Product | null>;
+  deleteProduct: (id: string) => Promise<boolean>;
+  createTable: (numero: number, capacidad?: number) => Promise<RestaurantTable | null>;
+  deleteTable: (numero: number) => Promise<boolean>;
+  clearCompletedOrders: () => Promise<number>;
+  quickSelectUser: (name: string, role?: UserRole) => void;
 }
 
 const RestaurantContext = createContext<RestaurantContextType | undefined>(undefined);
@@ -522,6 +539,143 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   };
 
+  const quickSelectUser = (name: string, newRole?: UserRole) => {
+    setUserNameState(name);
+    localStorage.setItem('carneriks_user', name);
+    if (newRole) {
+      setRoleState(newRole);
+      localStorage.setItem('carneriks_role', newRole);
+    }
+    const roleSlug = newRole === 'kitchen' ? 'cocina' : newRole === 'admin' ? 'administrador' : 'mesero';
+    const mockAuth: AuthUser = {
+      id: `usr-${name.toLowerCase().replace(/[^a-z0-9]/g, '')}`,
+      nombre: name,
+      usuario: name.toLowerCase().replace(/[^a-z0-9]/g, ''),
+      rol: roleSlug,
+      activo: 1,
+    };
+    setCurrentUser(mockAuth);
+    localStorage.setItem('carneriks_auth_user', JSON.stringify(mockAuth));
+  };
+
+  const createProduct = async (data: any): Promise<Product | null> => {
+    try {
+      const res = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const created: Product = await res.json();
+        setProducts((prev) => [...prev.filter((p) => p.id !== created.id), created]);
+        const evt: SystemEvent = {
+          type: 'INVENTORY_UPDATED',
+          payload: [...products.filter((p) => p.id !== created.id), created],
+          timestamp: new Date().toISOString(),
+        };
+        broadcastChannelRef.current?.postMessage(evt);
+        syncProductToFirestore(created).catch((e) => console.warn('Firestore sync product notice:', e));
+        return created;
+      }
+    } catch (err) {
+      console.error('Error creating product:', err);
+    }
+    return null;
+  };
+
+  const updateProduct = async (id: string, data: any): Promise<Product | null> => {
+    try {
+      const res = await fetch(`/api/products/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const updated: Product = await res.json();
+        setProducts((prev) => prev.map((p) => (p.id === id ? updated : p)));
+        const evt: SystemEvent = {
+          type: 'INVENTORY_UPDATED',
+          payload: products.map((p) => (p.id === id ? updated : p)),
+          timestamp: new Date().toISOString(),
+        };
+        broadcastChannelRef.current?.postMessage(evt);
+        syncProductToFirestore(updated).catch((e) => console.warn('Firestore sync product notice:', e));
+        return updated;
+      }
+    } catch (err) {
+      console.error('Error updating product:', err);
+    }
+    return null;
+  };
+
+  const deleteProduct = async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/products/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setProducts((prev) => prev.filter((p) => p.id !== id));
+        const evt: SystemEvent = {
+          type: 'INVENTORY_UPDATED',
+          payload: products.filter((p) => p.id !== id),
+          timestamp: new Date().toISOString(),
+        };
+        broadcastChannelRef.current?.postMessage(evt);
+        return true;
+      }
+    } catch (err) {
+      console.error('Error deleting product:', err);
+    }
+    return false;
+  };
+
+  const createTable = async (numero: number, capacidad: number = 4): Promise<RestaurantTable | null> => {
+    try {
+      const res = await fetch('/api/tables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: numero, capacity: capacidad }),
+      });
+      if (res.ok) {
+        const created: RestaurantTable = await res.json();
+        setTables((prev) => {
+          const filtered = prev.filter((t) => t.number !== numero);
+          return [...filtered, created].sort((a, b) => a.number - b.number);
+        });
+        syncTableToFirestore(created).catch((e) => console.warn('Firestore sync table notice:', e));
+        return created;
+      }
+    } catch (err) {
+      console.error('Error creating table:', err);
+    }
+    return null;
+  };
+
+  const deleteTable = async (numero: number): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/tables/${numero}`, { method: 'DELETE' });
+      if (res.ok) {
+        setTables((prev) => prev.filter((t) => t.number !== numero));
+        return true;
+      }
+    } catch (err) {
+      console.error('Error deleting table:', err);
+    }
+    return false;
+  };
+
+  const clearCompletedOrders = async (): Promise<number> => {
+    try {
+      const res = await fetch('/api/pedidos/clear-completed', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        await fetchSnapshot();
+        return data.clearedCount || 0;
+      }
+    } catch (err) {
+      console.error('Error clearing completed orders:', err);
+    }
+    return 0;
+  };
+
   return (
     <RestaurantContext.Provider
       value={{
@@ -555,6 +709,13 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         login,
         logout,
         setOrderErrorMessage,
+        createProduct,
+        updateProduct,
+        deleteProduct,
+        createTable,
+        deleteTable,
+        clearCompletedOrders,
+        quickSelectUser,
       }}
     >
       {children}

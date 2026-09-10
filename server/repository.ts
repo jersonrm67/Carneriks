@@ -107,6 +107,128 @@ export class RestaurantRepository {
     return queryOne<DbPlato>('SELECT * FROM platos WHERE id = ?;', [id]);
   }
 
+  public createPlato(data: {
+    name: string;
+    category: string;
+    price: number;
+    stock: number;
+    description?: string;
+    supportsDoneness?: boolean;
+    cutWeight?: string;
+    badge?: string;
+    stockMinimo?: number;
+  }): Product {
+    const slug = data.name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    const id = `${slug || 'plato'}-${Date.now().toString().slice(-4)}`;
+    const now = new Date().toISOString();
+    const stock = Math.max(0, Number(data.stock || 0));
+    const disponible = stock > 0 ? 1 : 0;
+    const stockMin = Number(data.stockMinimo || 3);
+
+    execute(
+      `INSERT INTO platos (
+        id, nombre, descripcion, precio, categoria, cantidad_disponible, stock_minimo,
+        disponible, activo, supports_doneness, cut_weight, badge, fecha_creacion
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?);`,
+      [
+        id,
+        data.name,
+        data.description || '',
+        Number(data.price),
+        data.category,
+        stock,
+        stockMin,
+        disponible,
+        data.supportsDoneness ? 1 : 0,
+        data.cutWeight || null,
+        data.badge || null,
+        now,
+      ]
+    );
+
+    return {
+      id,
+      name: data.name,
+      category: data.category as any,
+      price: Number(data.price),
+      stock,
+      isAvailable: disponible === 1,
+      description: data.description || '',
+      supportsDoneness: Boolean(data.supportsDoneness),
+      cutWeight: data.cutWeight,
+      badge: data.badge,
+      stockMinimo: stockMin,
+    };
+  }
+
+  public updatePlatoFull(
+    id: string,
+    data: {
+      name?: string;
+      category?: string;
+      price?: number;
+      stock?: number;
+      isAvailable?: boolean;
+      description?: string;
+      supportsDoneness?: boolean;
+      cutWeight?: string;
+      badge?: string;
+      stockMinimo?: number;
+    }
+  ): Product | null {
+    const existing = this.getPlatoById(id);
+    if (!existing) return null;
+
+    const name = data.name !== undefined ? data.name : existing.nombre;
+    const category = data.category !== undefined ? data.category : existing.categoria;
+    const price = data.price !== undefined ? Number(data.price) : existing.precio;
+    const stock = data.stock !== undefined ? Math.max(0, Number(data.stock)) : existing.cantidad_disponible;
+    const isAvail = data.isAvailable !== undefined ? (data.isAvailable && stock > 0 ? 1 : 0) : (existing.disponible && stock > 0 ? 1 : 0);
+    const desc = data.description !== undefined ? data.description : (existing.descripcion || '');
+    const doneness = data.supportsDoneness !== undefined ? (data.supportsDoneness ? 1 : 0) : existing.supports_doneness;
+    const cut = data.cutWeight !== undefined ? data.cutWeight : existing.cut_weight;
+    const badge = data.badge !== undefined ? data.badge : existing.badge;
+    const minStock = data.stockMinimo !== undefined ? Number(data.stockMinimo) : existing.stock_minimo;
+
+    execute(
+      `UPDATE platos SET 
+        nombre = ?, categoria = ?, precio = ?, cantidad_disponible = ?, disponible = ?,
+        descripcion = ?, supports_doneness = ?, cut_weight = ?, badge = ?, stock_minimo = ?
+      WHERE id = ?;`,
+      [name, category, price, stock, isAvail, desc, doneness, cut, badge, minStock, id]
+    );
+
+    const updated = this.getPlatoById(id);
+    if (!updated) return null;
+
+    return {
+      id: updated.id,
+      name: updated.nombre,
+      category: updated.categoria as any,
+      price: updated.precio,
+      stock: updated.cantidad_disponible,
+      isAvailable: Boolean(updated.disponible && updated.cantidad_disponible > 0),
+      description: updated.descripcion || '',
+      supportsDoneness: Boolean(updated.supports_doneness),
+      cutWeight: updated.cut_weight || undefined,
+      badge: updated.badge || undefined,
+      stockMinimo: updated.stock_minimo,
+    };
+  }
+
+  public deletePlato(id: string): boolean {
+    const existing = this.getPlatoById(id);
+    if (!existing) return false;
+    // Mark as inactive so foreign keys in past orders stay valid
+    execute('UPDATE platos SET activo = 0, disponible = 0 WHERE id = ?;', [id]);
+    return true;
+  }
+
   public updatePlatoStock(id: string, stock: number, isAvailable: boolean): Product | null {
     const plato = this.getPlatoById(id);
     if (!plato) return null;
@@ -189,6 +311,44 @@ export class RestaurantRepository {
     execute('UPDATE mesas SET estado = ? WHERE id = ?;', [estado, mesa.id]);
     const all = this.getAllMesas();
     return all.find((m) => m.number === numero) || null;
+  }
+
+  public createMesa(numero: number, capacidad: number = 4): RestaurantTable {
+    const existing = this.getMesaByNumero(numero);
+    if (existing) {
+      if (existing.activa === 0) {
+        execute('UPDATE mesas SET activa = 1, capacidad = ?, estado = \'libre\' WHERE id = ?;', [capacidad, existing.id]);
+      } else {
+        execute('UPDATE mesas SET capacidad = ? WHERE id = ?;', [capacidad, existing.id]);
+      }
+      return this.getAllMesas().find((m) => m.number === numero)!;
+    }
+
+    const id = `mesa-${numero}`;
+    execute('INSERT INTO mesas (id, numero, capacidad, estado, activa) VALUES (?, ?, ?, \'libre\', 1);', [
+      id,
+      numero,
+      capacidad,
+    ]);
+    return this.getAllMesas().find((m) => m.number === numero)!;
+  }
+
+  public deleteMesa(numero: number): boolean {
+    const existing = this.getMesaByNumero(numero);
+    if (!existing) return false;
+    execute('UPDATE mesas SET activa = 0 WHERE id = ?;', [existing.id]);
+    return true;
+  }
+
+  public clearCompletedOrders(): number {
+    const rows = queryAll<{ id: string }>(
+      "SELECT id FROM pedidos WHERE estado IN ('entregado', 'cancelado');"
+    );
+    for (const r of rows) {
+      execute('DELETE FROM detalle_pedidos WHERE pedido_id = ?;', [r.id]);
+      execute('DELETE FROM pedidos WHERE id = ?;', [r.id]);
+    }
+    return rows.length;
   }
 
   // ================= PEDIDOS / ORDERS =================

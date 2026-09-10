@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { firebaseConfig } from '../firebase';
 import { pingFirestore } from '../services/firebaseSync';
+import { TableDataExplorer } from './TableDataExplorer';
 
 interface DatabaseModalProps {
   isOpen: boolean;
@@ -29,7 +30,7 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
   const { dbStatus, isConnected, orders, products, tables, resetDemoData } = useRestaurant();
   const [copied, setCopied] = useState(false);
   const [copiedFirebase, setCopiedFirebase] = useState(false);
-  const [activeTab, setActiveTab] = useState<'status' | 'firebase' | 'schema' | 'api'>('status');
+  const [activeTab, setActiveTab] = useState<'status' | 'firebase' | 'explorer' | 'schema' | 'api'>('status');
   const [testingFirebase, setTestingFirebase] = useState(false);
   const [firebaseTestResult, setFirebaseTestResult] = useState<string | null>(null);
 
@@ -209,6 +210,17 @@ CREATE TABLE detalle_pedidos (
             }`}
           >
             API REST & SSE
+          </button>
+          <button
+            onClick={() => setActiveTab('explorer')}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+              activeTab === 'explorer'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100'
+            }`}
+          >
+            <Database className="h-3.5 w-3.5 text-amber-600" />
+            <span>Consultar Tablas SQL</span>
           </button>
         </div>
 
@@ -463,6 +475,13 @@ CREATE TABLE detalle_pedidos (
                 <span className="text-stone-600 font-sans">Canal SSE en tiempo real a todos los dispositivos</span>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Tab Content: SQL Data Explorer */}
+        {activeTab === 'explorer' && (
+          <div className="mt-4">
+            <TableDataExplorer />
           </div>
         )}
       </div>

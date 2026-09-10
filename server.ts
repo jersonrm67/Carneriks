@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { initDatabase } from './server/db.ts';
+import { initDatabase, queryAll } from './server/db.ts';
 import { store } from './server/store.ts';
 import { repository, dbStatusToUiStatus } from './server/repository.ts';
 
@@ -65,6 +65,60 @@ async function startServer() {
     res.json(store.getProducts());
   });
 
+  app.post(['/api/platos', '/api/products'], (req, res) => {
+    try {
+      const { name, category, price, stock, description, supportsDoneness, cutWeight, badge, stockMinimo } = req.body;
+      if (!name || price === undefined) {
+        return res.status(400).json({ error: 'Se requiere nombre y precio para el plato.' });
+      }
+
+      const created = store.createProduct({
+        name,
+        category: category || 'carnes',
+        price: Number(price),
+        stock: Number(stock || 0),
+        description: description || '',
+        supportsDoneness: Boolean(supportsDoneness),
+        cutWeight: cutWeight || undefined,
+        badge: badge || undefined,
+        stockMinimo: Number(stockMinimo || 3),
+      });
+
+      res.status(201).json(created);
+    } catch (err: any) {
+      console.error('Error creating product:', err);
+      res.status(500).json({ error: err.message || 'Error al crear plato en la base de datos' });
+    }
+  });
+
+  app.put(['/api/platos/:id', '/api/products/:id'], (req, res) => {
+    try {
+      const { id } = req.params;
+      const updated = store.updateProduct(id, req.body);
+      if (!updated) {
+        return res.status(404).json({ error: 'Plato no encontrado' });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      console.error('Error updating product:', err);
+      res.status(500).json({ error: err.message || 'Error al actualizar plato' });
+    }
+  });
+
+  app.delete(['/api/platos/:id', '/api/products/:id'], (req, res) => {
+    try {
+      const { id } = req.params;
+      const ok = store.deleteProduct(id);
+      if (!ok) {
+        return res.status(404).json({ error: 'Plato no encontrado' });
+      }
+      res.json({ success: true, message: `Plato ${id} eliminado de la base de datos` });
+    } catch (err: any) {
+      console.error('Error deleting product:', err);
+      res.status(500).json({ error: err.message || 'Error al eliminar plato' });
+    }
+  });
+
   app.patch(['/api/platos/:id/stock', '/api/products/:id/stock'], (req, res) => {
     const { id } = req.params;
     const { stock, isAvailable, cantidad_disponible, disponible } = req.body;
@@ -85,6 +139,36 @@ async function startServer() {
   // ================= MESAS / TABLES =================
   app.get(['/api/mesas', '/api/tables'], (req, res) => {
     res.json(store.getTables());
+  });
+
+  app.post(['/api/mesas', '/api/tables'], (req, res) => {
+    try {
+      const { number, numero, capacity, capacidad } = req.body;
+      const tNum = Number(number || numero);
+      const cap = Number(capacity || capacidad || 4);
+
+      if (!tNum || isNaN(tNum)) {
+        return res.status(400).json({ error: 'Se requiere un número de mesa válido.' });
+      }
+
+      const table = store.createTable(tNum, cap);
+      res.status(201).json(table);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Error al crear mesa' });
+    }
+  });
+
+  app.delete(['/api/mesas/:number', '/api/tables/:number'], (req, res) => {
+    try {
+      const tNum = Number(req.params.number.replace('mesa-', ''));
+      const ok = store.deleteTable(tNum);
+      if (!ok) {
+        return res.status(404).json({ error: 'Mesa no encontrada' });
+      }
+      res.json({ success: true, message: `Mesa ${tNum} eliminada` });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Error al eliminar mesa' });
+    }
   });
 
   app.patch(['/api/mesas/:id/estado', '/api/tables/:number/status'], (req, res) => {
@@ -161,6 +245,45 @@ async function startServer() {
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
     res.json(updated);
+  });
+
+  app.delete(['/api/pedidos/:id', '/api/orders/:id'], (req, res) => {
+    const { id } = req.params;
+    const updated = store.updateOrderStatus(id, 'cancelled');
+    if (!updated) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+    res.json({ success: true, message: `Pedido ${id} cancelado en base de datos`, order: updated });
+  });
+
+  app.post('/api/pedidos/clear-completed', (req, res) => {
+    try {
+      const clearedCount = store.clearCompletedOrders();
+      res.json({ success: true, clearedCount, message: `Se limpiaron ${clearedCount} pedidos completados o cancelados.` });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Error al limpiar pedidos' });
+    }
+  });
+
+  // Table Data Explorer for direct Database inspection
+  app.get('/api/database/table/:name', (req, res) => {
+    const { name } = req.params;
+    const allowedTables = ['platos', 'mesas', 'pedidos', 'detalle_pedidos', 'usuarios'];
+    if (!allowedTables.includes(name)) {
+      return res.status(400).json({ error: `Tabla no permitida. Tablas disponibles: ${allowedTables.join(', ')}` });
+    }
+
+    try {
+      const rows = queryAll(`SELECT * FROM ${name} LIMIT 100;`);
+      res.json({
+        table: name,
+        total: rows.length,
+        columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+        rows,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Error al consultar tabla' });
+    }
   });
 
   // Demo Reset / Re-seed

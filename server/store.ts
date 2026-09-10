@@ -126,6 +126,80 @@ class StoreManager {
     return updated;
   }
 
+  public createProduct(data: any): Product {
+    const created = repository.createPlato(data);
+    this.broadcast({
+      type: 'INVENTORY_UPDATED',
+      payload: repository.getAllPlatos(),
+      timestamp: new Date().toISOString(),
+    });
+    return created;
+  }
+
+  public updateProduct(id: string, data: any): Product | null {
+    const updated = repository.updatePlatoFull(id, data);
+    if (!updated) return null;
+    this.broadcast({
+      type: 'INVENTORY_UPDATED',
+      payload: repository.getAllPlatos(),
+      timestamp: new Date().toISOString(),
+    });
+    return updated;
+  }
+
+  public deleteProduct(id: string): boolean {
+    const success = repository.deletePlato(id);
+    if (success) {
+      this.broadcast({
+        type: 'INVENTORY_UPDATED',
+        payload: repository.getAllPlatos(),
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return success;
+  }
+
+  public createTable(numero: number, capacidad?: number): RestaurantTable {
+    const table = repository.createMesa(numero, capacidad);
+    this.broadcast({
+      type: 'TABLE_UPDATED',
+      payload: table,
+      timestamp: new Date().toISOString(),
+    });
+    return table;
+  }
+
+  public deleteTable(numero: number): boolean {
+    const success = repository.deleteMesa(numero);
+    if (success) {
+      const all = repository.getAllMesas();
+      this.broadcast({
+        type: 'FULL_SYNC',
+        payload: {
+          products: repository.getAllPlatos(),
+          tables: all,
+          orders: repository.getAllOrders(),
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return success;
+  }
+
+  public clearCompletedOrders(): number {
+    const count = repository.clearCompletedOrders();
+    this.broadcast({
+      type: 'FULL_SYNC',
+      payload: {
+        products: repository.getAllPlatos(),
+        tables: repository.getAllMesas(),
+        orders: repository.getAllOrders(),
+      },
+      timestamp: new Date().toISOString(),
+    });
+    return count;
+  }
+
   public updateTableStatus(tableNumber: number, status: 'free' | 'occupied'): RestaurantTable | null {
     const dbStatus = status === 'free' ? 'libre' : 'ocupada';
     const updated = repository.updateMesaEstado(tableNumber, dbStatus);

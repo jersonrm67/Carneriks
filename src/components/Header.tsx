@@ -34,6 +34,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDbModal, onOpenLoginModal 
     isMuted,
     toggleMute,
     dbStatus,
+    quickSelectUser,
   } = useRestaurant();
 
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -148,53 +149,82 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDbModal, onOpenLoginModal 
             </button>
 
             {showUserDropdown && (
-              <div className="absolute right-0 mt-1 w-52 rounded-xl border border-stone-200 bg-white p-1.5 shadow-lg ring-1 ring-black/5 z-50">
-                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-600 flex items-center justify-between">
-                  <span>Cambiar {role === 'kitchen' ? 'Cocinero' : 'Mesero'}</span>
-                  {currentUser && <span className="text-amber-600 font-black">{currentUser.rol}</span>}
+              <div className="absolute right-0 mt-1 w-56 rounded-xl border border-stone-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 z-50 animate-in fade-in">
+                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-500 flex items-center justify-between">
+                  <span>Acceso Rápido</span>
+                  <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-black text-[9px]">Sin Clave</span>
                 </div>
-                {currentStaffList.map((name) => (
-                  <button
-                    key={name}
-                    onClick={() => {
-                      setUserName(name);
-                      setShowUserDropdown(false);
-                    }}
-                    className={`w-full rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors ${
-                      userName === name
-                        ? 'bg-amber-50 font-bold text-amber-900'
-                        : 'text-stone-700 hover:bg-stone-100'
-                    }`}
-                  >
-                    {name}
-                  </button>
-                ))}
 
-                <div className="my-1 border-t border-stone-100"></div>
+                <div className="space-y-0.5 mt-1">
+                  {currentStaffList.map((name) => (
+                    <button
+                      key={name}
+                      onClick={() => {
+                        quickSelectUser(name, role);
+                        setShowUserDropdown(false);
+                      }}
+                      className={`w-full rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors ${
+                        userName === name
+                          ? 'bg-amber-50 font-bold text-amber-900'
+                          : 'text-stone-700 hover:bg-stone-100'
+                      }`}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="my-1.5 border-t border-stone-100"></div>
+
+                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-400">
+                  Cambiar Perfil
+                </div>
+
+                <button
+                  onClick={() => {
+                    quickSelectUser('Carlos M. (Mesero)', 'waiter');
+                    setShowUserDropdown(false);
+                  }}
+                  className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-stone-700 hover:bg-amber-50 hover:text-amber-900"
+                >
+                  <Utensils className="h-3.5 w-3.5 text-amber-600" />
+                  <span>Modo Mesero</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    quickSelectUser('Chef Marco', 'kitchen');
+                    setShowUserDropdown(false);
+                  }}
+                  className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-stone-700 hover:bg-orange-50 hover:text-orange-900"
+                >
+                  <ChefHat className="h-3.5 w-3.5 text-orange-600" />
+                  <span>Modo Cocina</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    quickSelectUser('Administrador BD', 'admin');
+                    setShowUserDropdown(false);
+                  }}
+                  className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-stone-700 hover:bg-purple-50 hover:text-purple-900"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5 text-purple-600" />
+                  <span>Modo Admin BD</span>
+                </button>
+
+                <div className="my-1.5 border-t border-stone-100"></div>
 
                 <button
                   onClick={() => {
                     setShowUserDropdown(false);
                     onOpenLoginModal();
                   }}
-                  className="w-full flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50"
+                  className="w-full flex items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-bold text-amber-800 bg-amber-50/70 hover:bg-amber-100"
                 >
-                  <Lock className="h-3.5 w-3.5 text-amber-600" />
-                  <span>{currentUser ? 'Cambiar Cuenta (Login BD)' : 'Iniciar Sesión (BD)'}</span>
+                  <span>Panel de Perfiles...</span>
+                  <span className="text-[10px] text-amber-600">Libre</span>
                 </button>
-
-                {currentUser && (
-                  <button
-                    onClick={() => {
-                      logout();
-                      setShowUserDropdown(false);
-                    }}
-                    className="w-full flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-red-600 hover:bg-red-50"
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    <span>Cerrar Sesión</span>
-                  </button>
-                )}
               </div>
             )}
           </div>
