@@ -215,11 +215,12 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDbModal, onOpenLoginModal 
           {/* DB Inspector Trigger */}
           <button
             onClick={onOpenDbModal}
-            title="Conexión de Base de Datos y Sincronización"
-            className="flex items-center gap-1 rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50"
+            title="Base de Datos: SQLite Relacional + Firebase Firestore (carneriks-b31a8)"
+            className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50/50 px-2 py-1.5 text-xs font-semibold text-stone-800 hover:bg-amber-100 transition-colors"
           >
             <Database className="h-3.5 w-3.5 text-stone-700" />
-            <span className="hidden sm:inline">BD</span>
+            <Flame className="h-3.5 w-3.5 text-orange-600" />
+            <span className="hidden sm:inline">BD & Nube</span>
           </button>
         </div>
       </div>

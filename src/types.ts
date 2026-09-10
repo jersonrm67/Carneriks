@@ -81,4 +81,6 @@ export interface DatabaseSyncStatus {
   activeConnections: number;
   totalOrdersToday: number;
   tables?: string[];
+  firebaseConnected?: boolean;
+  firebaseProjectId?: string;
 }

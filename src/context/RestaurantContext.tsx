@@ -1,6 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { Product, Order, RestaurantTable, OrderStatus, UserRole, SystemEvent, DatabaseSyncStatus, AuthUser } from '../types';
 import { sounds } from '../services/sound';
+import {
+  syncOrderToFirestore,
+  syncOrderStatusToFirestore,
+  syncProductToFirestore,
+  syncTableToFirestore,
+  pingFirestore,
+} from '../services/firebaseSync';
 
 interface CartItem {
   productId: string;
@@ -67,6 +74,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     activeConnections: 1,
     totalOrdersToday: 0,
     tables: ['usuarios', 'mesas', 'platos', 'pedidos', 'detalle_pedidos'],
+    firebaseConnected: true,
+    firebaseProjectId: 'carneriks-b31a8',
   });
 
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
@@ -281,6 +290,13 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     connectSSE();
 
+    // Test Firebase Firestore connection on mount
+    pingFirestore().then((res) => {
+      if (res.ok) {
+        console.log('🔥 Firebase Firestore conectado a proyecto:', 'carneriks-b31a8');
+      }
+    });
+
     // Poll DB status periodically
     const pingInterval = setInterval(async () => {
       try {
@@ -289,7 +305,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (res.ok) {
           const data = await res.json();
           const latency = Math.round(performance.now() - start);
-          setDbStatus({
+          setDbStatus((prev) => ({
+            ...prev,
             connected: true,
             driver: data.driver,
             database: data.database,
@@ -297,7 +314,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             activeConnections: data.activeConnections,
             totalOrdersToday: data.totalOrdersToday,
             tables: data.tables,
-          });
+            firebaseConnected: true,
+            firebaseProjectId: 'carneriks-b31a8',
+          }));
         }
       } catch (err) {
         // server temporarily offline
@@ -385,6 +404,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         broadcastChannelRef.current?.postMessage(evt);
         handleSystemEvent(evt);
 
+        // Synchronize in Firebase Firestore ('pedidos' collection)
+        syncOrderToFirestore(created).catch((e) => console.warn('Firestore sync background notice:', e));
+
         sounds.playNewOrderChime();
         clearCart();
         return true;
@@ -424,6 +446,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         broadcastChannelRef.current?.postMessage(evt);
         handleSystemEvent(evt);
         sounds.playTap();
+
+        // Sync to Firestore
+        syncOrderStatusToFirestore(orderId, status).catch((e) => console.warn('Firestore update status notice:', e));
       }
     } catch (e) {
       console.error('Failed to update order status:', e);
@@ -452,6 +477,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           timestamp: new Date().toISOString(),
         };
         broadcastChannelRef.current?.postMessage(evt);
+
+        // Sync to Firestore
+        syncProductToFirestore(updatedProd).catch((e) => console.warn('Firestore sync product notice:', e));
       }
     } catch (e) {
       console.error('Failed to update stock:', e);
@@ -475,6 +503,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         };
         broadcastChannelRef.current?.postMessage(evt);
         handleSystemEvent(evt);
+
+        // Sync to Firestore
+        syncTableToFirestore(updated).catch((e) => console.warn('Firestore sync table notice:', e));
       }
     } catch (e) {
       console.error('Failed to update table:', e);

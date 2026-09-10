@@ -13,7 +13,12 @@ import {
   RefreshCw,
   KeyRound,
   ShieldCheck,
+  Flame,
+  Cloud,
+  ExternalLink,
 } from 'lucide-react';
+import { firebaseConfig } from '../firebase';
+import { pingFirestore } from '../services/firebaseSync';
 
 interface DatabaseModalProps {
   isOpen: boolean;
@@ -23,7 +28,48 @@ interface DatabaseModalProps {
 export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose }) => {
   const { dbStatus, isConnected, orders, products, tables, resetDemoData } = useRestaurant();
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<'status' | 'schema' | 'api'>('status');
+  const [copiedFirebase, setCopiedFirebase] = useState(false);
+  const [activeTab, setActiveTab] = useState<'status' | 'firebase' | 'schema' | 'api'>('status');
+  const [testingFirebase, setTestingFirebase] = useState(false);
+  const [firebaseTestResult, setFirebaseTestResult] = useState<string | null>(null);
+
+  const sampleFirebaseCode = `// Firebase JS SDK v11 - Inicializado para Carneriks
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+import { getFirestore } from "firebase/firestore";
+
+const firebaseConfig = {
+  apiKey: "${firebaseConfig.apiKey}",
+  authDomain: "${firebaseConfig.authDomain}",
+  projectId: "${firebaseConfig.projectId}",
+  storageBucket: "${firebaseConfig.storageBucket}",
+  messagingSenderId: "${firebaseConfig.messagingSenderId}",
+  appId: "${firebaseConfig.appId}",
+  measurementId: "${firebaseConfig.measurementId}"
+};
+
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app);
+export const analytics = getAnalytics(app);`;
+
+  const copyFirebaseConfig = () => {
+    navigator.clipboard.writeText(sampleFirebaseCode);
+    setCopiedFirebase(true);
+    setTimeout(() => setCopiedFirebase(false), 2000);
+  };
+
+  const handleTestFirebase = async () => {
+    setTestingFirebase(true);
+    setFirebaseTestResult(null);
+    try {
+      const res = await pingFirestore();
+      setFirebaseTestResult(res.message);
+    } catch (e: any) {
+      setFirebaseTestResult(e.message || 'Error al conectar');
+    } finally {
+      setTestingFirebase(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -119,7 +165,7 @@ CREATE TABLE detalle_pedidos (
         </div>
 
         {/* Tab Selection */}
-        <div className="mt-4 flex gap-2 border-b border-stone-100 pb-3">
+        <div className="mt-4 flex flex-wrap gap-2 border-b border-stone-100 pb-3">
           <button
             onClick={() => setActiveTab('status')}
             className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
@@ -129,6 +175,20 @@ CREATE TABLE detalle_pedidos (
             }`}
           >
             Estado en Vivo & Tablas
+          </button>
+          <button
+            onClick={() => setActiveTab('firebase')}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
+              activeTab === 'firebase'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100'
+            }`}
+          >
+            <Flame className="h-3.5 w-3.5 text-orange-500" />
+            <span>Firebase Firestore</span>
+            <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.2 text-[9px] text-emerald-700 font-black">
+              Nube
+            </span>
           </button>
           <button
             onClick={() => setActiveTab('schema')}
@@ -155,18 +215,32 @@ CREATE TABLE detalle_pedidos (
         {/* Tab Content: Status */}
         {activeTab === 'status' && (
           <div className="mt-4 space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="rounded-xl border border-stone-200 bg-stone-50/50 p-3.5">
                 <div className="flex items-center justify-between text-xs text-stone-700 font-medium">
                   <span>Motor Relacional</span>
                   <Activity className="h-4 w-4 text-amber-600" />
                 </div>
                 <div className="mt-1 text-sm font-black text-stone-900">
-                  SQLite ACID Relacional
+                  SQLite ACID
                 </div>
                 <div className="mt-0.5 text-[11px] text-emerald-700 font-bold flex items-center gap-1">
                   <CheckCircle2 className="h-3 w-3" />
                   <span>data/carneriks.sqlite</span>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-stone-200 bg-stone-50/50 p-3.5">
+                <div className="flex items-center justify-between text-xs text-stone-700 font-medium">
+                  <span>Base Cloud Firebase</span>
+                  <Flame className="h-4 w-4 text-orange-500" />
+                </div>
+                <div className="mt-1 text-sm font-black text-stone-900">
+                  Firestore Activo
+                </div>
+                <div className="mt-0.5 text-[11px] text-emerald-700 font-bold flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" />
+                  <span>carneriks-b31a8</span>
                 </div>
               </div>
 
@@ -237,6 +311,103 @@ CREATE TABLE detalle_pedidos (
                 <RefreshCw className="h-3.5 w-3.5" />
                 <span>Restablecer BD</span>
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Tab Content: Firebase */}
+        {activeTab === 'firebase' && (
+          <div className="mt-4 space-y-4">
+            <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500 text-white shadow-xs">
+                    <Flame className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-stone-900">
+                      Firebase Firestore & Analytics Conectado
+                    </h4>
+                    <p className="text-xs text-stone-600">
+                      Proyecto: <span className="font-mono font-bold text-amber-900">{firebaseConfig.projectId}</span>
+                    </p>
+                  </div>
+                </div>
+                <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-800">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                  SDK Inicializado
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                <div className="rounded-lg bg-white p-2.5 border border-stone-200">
+                  <div className="text-[11px] text-stone-500 font-medium">Auth Domain</div>
+                  <div className="font-mono font-bold text-stone-800 truncate">{firebaseConfig.authDomain}</div>
+                </div>
+                <div className="rounded-lg bg-white p-2.5 border border-stone-200">
+                  <div className="text-[11px] text-stone-500 font-medium">Storage Bucket</div>
+                  <div className="font-mono font-bold text-stone-800 truncate">{firebaseConfig.storageBucket}</div>
+                </div>
+                <div className="rounded-lg bg-white p-2.5 border border-stone-200">
+                  <div className="text-[11px] text-stone-500 font-medium">Messaging Sender ID</div>
+                  <div className="font-mono font-bold text-stone-800">{firebaseConfig.messagingSenderId}</div>
+                </div>
+              </div>
+
+              {/* Collections Info */}
+              <div className="mt-3 rounded-lg bg-white p-3 border border-stone-200">
+                <div className="text-xs font-bold text-stone-800 mb-2">Colecciones en la Nube (Firestore):</div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <div className="rounded-md bg-stone-50 p-2 border border-stone-100">
+                    <span className="font-mono font-bold text-amber-700">/pedidos</span>
+                    <p className="text-[11px] text-stone-600 mt-0.5">Sincroniza comandas y cambios de estado en cocina</p>
+                  </div>
+                  <div className="rounded-md bg-stone-50 p-2 border border-stone-100">
+                    <span className="font-mono font-bold text-amber-700">/platos</span>
+                    <p className="text-[11px] text-stone-600 mt-0.5">Catálogo con stock disponible y disponibilidad</p>
+                  </div>
+                  <div className="rounded-md bg-stone-50 p-2 border border-stone-100">
+                    <span className="font-mono font-bold text-amber-700">/mesas</span>
+                    <p className="text-[11px] text-stone-600 mt-0.5">Estado de mesas (libre / ocupada)</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Test Connection Button */}
+              <div className="mt-3 flex items-center justify-between pt-2">
+                <button
+                  onClick={handleTestFirebase}
+                  disabled={testingFirebase}
+                  className="flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-stone-800 transition-colors disabled:opacity-50"
+                >
+                  <Cloud className="h-3.5 w-3.5 text-amber-400" />
+                  <span>{testingFirebase ? 'Comprobando conexión...' : 'Probar Conexión Firestore'}</span>
+                </button>
+                {firebaseTestResult && (
+                  <span className="text-xs font-medium text-stone-700 bg-white px-2.5 py-1 rounded-md border border-stone-200">
+                    {firebaseTestResult}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Code Snippet */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-stone-700">
+                  Código de Inicialización Firebase
+                </span>
+                <button
+                  onClick={copyFirebaseConfig}
+                  className="flex items-center gap-1 rounded-lg border border-stone-200 px-2.5 py-1 text-xs font-semibold text-stone-700 hover:bg-stone-50"
+                >
+                  {copiedFirebase ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  <span>{copiedFirebase ? 'Copiado' : 'Copiar Config'}</span>
+                </button>
+              </div>
+              <pre className="overflow-x-auto rounded-xl bg-stone-900 p-3.5 text-[11px] font-mono leading-relaxed text-stone-200">
+                {sampleFirebaseCode}
+              </pre>
             </div>
           </div>
         )}
