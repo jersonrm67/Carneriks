@@ -1,11 +1,7 @@
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { store } from './server/store.ts';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
@@ -136,8 +132,14 @@ async function startServer() {
     });
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== 'production') {
+  // API 404 handler
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ error: 'Ruta API no encontrada' });
+  });
+
+  // Vite middleware for development vs static files in production
+  const isProduction = process.env.NODE_ENV === 'production' || process.argv[1]?.endsWith('server.cjs');
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
