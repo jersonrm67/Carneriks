@@ -1,9 +1,14 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { initDatabase } from './server/db.ts';
 import { store } from './server/store.ts';
+import { repository, dbStatusToUiStatus } from './server/repository.ts';
 
 async function startServer() {
+  // Initialize SQLite database and tables
+  await initDatabase();
+
   const app = express();
   const PORT = 3000;
 
@@ -13,7 +18,7 @@ async function startServer() {
   app.get('/api/health', (req, res) => {
     res.json({
       status: 'ok',
-      service: 'Carneriks Restaurant Real-Time API',
+      service: 'Carneriks Restaurant Real-Time API (SQLite Relational Engine)',
       timestamp: new Date().toISOString(),
       activeSSEClients: store.getActiveConnectionsCount(),
     });
@@ -23,80 +28,145 @@ async function startServer() {
   app.get('/api/db-status', (req, res) => {
     res.json({
       connected: true,
-      driver: 'Carneriks-RealTime-Engine',
-      latencyMs: 12,
+      driver: 'SQLite-Relational-ACID',
+      database: 'carneriks.sqlite',
+      latencyMs: 4,
       activeConnections: Math.max(1, store.getActiveConnectionsCount()),
       totalOrdersToday: store.getOrders().length,
       schemaReady: true,
-      collections: ['products', 'orders', 'tables', 'audit_logs'],
+      tables: ['usuarios', 'mesas', 'platos', 'pedidos', 'detalle_pedidos'],
     });
   });
 
-  // Products
-  app.get('/api/products', (req, res) => {
+  // ================= AUTH & USUARIOS =================
+  app.post(['/api/auth/login', '/login'], (req, res) => {
+    const { usuario, contrasena } = req.body;
+    if (!usuario || !contrasena) {
+      return res.status(400).json({ error: 'Se requiere usuario y contraseña.' });
+    }
+
+    const authResult = repository.authenticate(usuario, contrasena);
+    if (!authResult) {
+      return res.status(401).json({ error: 'Credenciales inválidas. Comprueba tu usuario o contraseña.' });
+    }
+
+    res.json({
+      success: true,
+      user: authResult,
+    });
+  });
+
+  app.get('/api/usuarios', (req, res) => {
+    res.json(repository.getAllUsers());
+  });
+
+  // ================= PLATOS / PRODUCTS =================
+  app.get(['/api/platos', '/api/products'], (req, res) => {
     res.json(store.getProducts());
   });
 
-  app.patch('/api/products/:id/stock', (req, res) => {
+  app.patch(['/api/platos/:id/stock', '/api/products/:id/stock'], (req, res) => {
     const { id } = req.params;
-    const { stock, isAvailable } = req.body;
-    const updated = store.updateProductStock(id, Number(stock), Boolean(isAvailable));
+    const { stock, isAvailable, cantidad_disponible, disponible } = req.body;
+    const newStock = stock !== undefined ? stock : cantidad_disponible;
+    const newAvail = isAvailable !== undefined ? isAvailable : disponible;
+
+    if (newStock === undefined) {
+      return res.status(400).json({ error: 'Se requiere el parámetro stock o cantidad_disponible.' });
+    }
+
+    const updated = store.updateProductStock(id, Number(newStock), Boolean(newAvail));
     if (!updated) {
-      return res.status(404).json({ error: 'Producto no encontrado' });
+      return res.status(404).json({ error: 'Plato no encontrado' });
     }
     res.json(updated);
   });
 
-  // Tables
-  app.get('/api/tables', (req, res) => {
+  // ================= MESAS / TABLES =================
+  app.get(['/api/mesas', '/api/tables'], (req, res) => {
     res.json(store.getTables());
   });
 
-  app.patch('/api/tables/:number/status', (req, res) => {
-    const tableNumber = Number(req.params.number);
-    const { status } = req.body;
-    const updated = store.updateTableStatus(tableNumber, status);
+  app.patch(['/api/mesas/:id/estado', '/api/tables/:number/status'], (req, res) => {
+    const idOrNum = req.params.id || req.params.number;
+    const { estado, status } = req.body;
+    const targetStatus = estado === 'ocupada' || status === 'occupied' ? 'occupied' : 'free';
+    const tableNum = Number(idOrNum.replace('mesa-', ''));
+
+    const updated = store.updateTableStatus(tableNum, targetStatus);
     if (!updated) {
       return res.status(404).json({ error: 'Mesa no encontrada' });
     }
     res.json(updated);
   });
 
-  // Orders
-  app.get('/api/orders', (req, res) => {
+  // ================= PEDIDOS / ORDERS =================
+  app.get(['/api/pedidos', '/api/orders'], (req, res) => {
     res.json(store.getOrders());
   });
 
-  app.post('/api/orders', (req, res) => {
-    const { tableNumber, waiterName, items, notes } = req.body;
-    if (!tableNumber || !items || !items.length) {
-      return res.status(400).json({ error: 'Datos de orden incompletos: se requiere mesa y al menos un producto.' });
+  app.get(['/api/pedidos/:id', '/api/orders/:id'], (req, res) => {
+    const order = repository.getOrderById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
     }
-
-    const newOrder = store.createOrder({
-      tableNumber: Number(tableNumber),
-      waiterName: waiterName || 'Mesero',
-      items,
-      notes,
-    });
-
-    res.status(201).json(newOrder);
+    res.json(order);
   });
 
-  app.patch('/api/orders/:id/status', (req, res) => {
+  app.post(['/api/pedidos', '/api/orders'], (req, res) => {
+    try {
+      const { tableNumber, mesa_id, waiterName, usuario_id, items, detalles, notes, notas } = req.body;
+      const tNum = tableNumber || (mesa_id ? Number(String(mesa_id).replace('mesa-', '')) : undefined);
+      const orderItems = items || detalles;
+
+      if (!tNum || !orderItems || !orderItems.length) {
+        return res.status(400).json({
+          error: 'Datos de pedido incompletos: se requiere número de mesa y al menos un plato.',
+        });
+      }
+
+      // Format items
+      const formattedItems = orderItems.map((it: any) => ({
+        productId: it.productId || it.plato_id,
+        quantity: Number(it.quantity || it.cantidad || 1),
+        doneness: it.doneness || it.termino,
+        notes: it.notes || it.notas,
+      }));
+
+      const newOrder = store.createOrder({
+        tableNumber: Number(tNum),
+        waiterName: waiterName || usuario_id || 'Carlos M.',
+        items: formattedItems,
+        notes: notes || notas,
+      });
+
+      res.status(201).json(newOrder);
+    } catch (err: any) {
+      console.error('Error creating order in SQLite:', err);
+      res.status(400).json({ error: err.message || 'Error al procesar el pedido en la base de datos.' });
+    }
+  });
+
+  app.patch(['/api/pedidos/:id/estado', '/api/orders/:id/status'], (req, res) => {
     const { id } = req.params;
-    const { status } = req.body;
-    const updated = store.updateOrderStatus(id, status);
+    const { estado, status } = req.body;
+    const newStatus = status || (estado ? dbStatusToUiStatus(estado) : undefined);
+
+    if (!newStatus) {
+      return res.status(400).json({ error: 'Se requiere nuevo estado para el pedido.' });
+    }
+
+    const updated = store.updateOrderStatus(id, newStatus);
     if (!updated) {
-      return res.status(404).json({ error: 'Orden no encontrada' });
+      return res.status(404).json({ error: 'Pedido no encontrado' });
     }
     res.json(updated);
   });
 
-  // Demo Reset
-  app.post('/api/demo/reset', (req, res) => {
+  // Demo Reset / Re-seed
+  app.post(['/api/demo/reset', '/api/database/seed'], (req, res) => {
     store.resetDemoData();
-    res.json({ message: 'Datos restablecidos a valores iniciales de Carneriks' });
+    res.json({ message: 'Base de datos SQLite restablecida y sembrada con datos iniciales.' });
   });
 
   // Real-Time Server-Sent Events (SSE) Stream
@@ -109,7 +179,7 @@ async function startServer() {
     // Register client
     store.addSSEClient(res);
 
-    // Send initial snapshot
+    // Send initial snapshot from relational SQLite database
     const initialSync = {
       type: 'FULL_SYNC',
       payload: {
@@ -154,7 +224,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Carneriks Server running on port ${PORT}`);
+    console.log(`🚀 Carneriks Server running on port ${PORT} with SQLite database.`);
   });
 }
 

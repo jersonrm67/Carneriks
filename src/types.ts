@@ -13,6 +13,7 @@ export interface Product {
   supportsDoneness: boolean;
   cutWeight?: string; // e.g. "400g", "350g"
   badge?: string;
+  stockMinimo?: number;
 }
 
 export interface OrderItem {
@@ -45,15 +46,26 @@ export interface Order {
 export type TableStatus = 'free' | 'occupied' | 'ordered' | 'ready_to_serve';
 
 export interface RestaurantTable {
+  id?: string;
   number: number;
   capacity: number;
   status: TableStatus;
+  dbEstado?: 'libre' | 'ocupada';
   activeOrderId?: string;
   waiterName?: string;
   lastUpdated: string;
 }
 
 export type UserRole = 'waiter' | 'kitchen' | 'admin';
+
+export interface AuthUser {
+  id: string;
+  nombre: string;
+  usuario: string;
+  rol: 'mesero' | 'cocina' | 'administrador';
+  activo: number;
+  fecha_creacion?: string;
+}
 
 export interface SystemEvent {
   type: 'ORDER_CREATED' | 'ORDER_STATUS_CHANGED' | 'INVENTORY_UPDATED' | 'TABLE_UPDATED' | 'FULL_SYNC';
@@ -63,8 +75,10 @@ export interface SystemEvent {
 
 export interface DatabaseSyncStatus {
   connected: boolean;
-  driver: 'Carneriks-RealTime-Engine' | 'PostgreSQL' | 'Firestore';
+  driver: string;
+  database?: string;
   lastPingMs: number;
   activeConnections: number;
   totalOrdersToday: number;
+  tables?: string[];
 }

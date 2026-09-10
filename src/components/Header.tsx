@@ -7,23 +7,28 @@ import {
   Package,
   Volume2,
   VolumeX,
-  Radio,
   Database,
   User,
   ChevronDown,
+  Lock,
+  LogOut,
+  ShieldCheck,
 } from 'lucide-react';
 import { UserRole } from '../types';
 
 interface HeaderProps {
   onOpenDbModal: () => void;
+  onOpenLoginModal: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenDbModal }) => {
+export const Header: React.FC<HeaderProps> = ({ onOpenDbModal, onOpenLoginModal }) => {
   const {
     role,
     setRole,
     userName,
     setUserName,
+    currentUser,
+    logout,
     isConnected,
     orders,
     isMuted,
@@ -88,16 +93,17 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDbModal }) => {
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500"></span>
               )}
             </span>
-            <span>{isConnected ? 'En Tiempo Real' : 'Reconectando...'}</span>
+            <span>{isConnected ? 'BD Conectada' : 'Reconectando...'}</span>
             <span className="text-[10px] text-stone-700">({dbStatus.lastPingMs}ms)</span>
           </button>
         </div>
 
-        {/* Role Selector Tabs (PRD MVP: Selección de Rol Mesero / Cocina) */}
+        {/* Role Selector Tabs */}
         <div className="flex items-center gap-1 rounded-xl bg-stone-100 p-1">
           {rolesList.map((r) => {
             const Icon = r.icon;
             const isActive = role === r.id;
+
             return (
               <button
                 key={r.id}
@@ -132,15 +138,20 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDbModal }) => {
               onClick={() => setShowUserDropdown(!showUserDropdown)}
               className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50"
             >
-              <User className="h-3.5 w-3.5 text-stone-700" />
+              {currentUser ? (
+                <ShieldCheck className="h-3.5 w-3.5 text-amber-600" />
+              ) : (
+                <User className="h-3.5 w-3.5 text-stone-700" />
+              )}
               <span className="max-w-[80px] truncate sm:max-w-none">{userName}</span>
               <ChevronDown className="h-3 w-3 text-stone-600" />
             </button>
 
             {showUserDropdown && (
-              <div className="absolute right-0 mt-1 w-44 rounded-xl border border-stone-200 bg-white p-1.5 shadow-lg ring-1 ring-black/5 z-50">
-                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-600">
-                  Cambiar {role === 'kitchen' ? 'Cocinero' : 'Mesero'}
+              <div className="absolute right-0 mt-1 w-52 rounded-xl border border-stone-200 bg-white p-1.5 shadow-lg ring-1 ring-black/5 z-50">
+                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-600 flex items-center justify-between">
+                  <span>Cambiar {role === 'kitchen' ? 'Cocinero' : 'Mesero'}</span>
+                  {currentUser && <span className="text-amber-600 font-black">{currentUser.rol}</span>}
                 </div>
                 {currentStaffList.map((name) => (
                   <button
@@ -158,6 +169,32 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDbModal }) => {
                     {name}
                   </button>
                 ))}
+
+                <div className="my-1 border-t border-stone-100"></div>
+
+                <button
+                  onClick={() => {
+                    setShowUserDropdown(false);
+                    onOpenLoginModal();
+                  }}
+                  className="w-full flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50"
+                >
+                  <Lock className="h-3.5 w-3.5 text-amber-600" />
+                  <span>{currentUser ? 'Cambiar Cuenta (Login BD)' : 'Iniciar Sesión (BD)'}</span>
+                </button>
+
+                {currentUser && (
+                  <button
+                    onClick={() => {
+                      logout();
+                      setShowUserDropdown(false);
+                    }}
+                    className="w-full flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-red-600 hover:bg-red-50"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    <span>Cerrar Sesión</span>
+                  </button>
+                )}
               </div>
             )}
           </div>

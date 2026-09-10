@@ -34,6 +34,8 @@ export const WaiterView: React.FC = () => {
     sendOrder,
     updateOrderStatus,
     userName,
+    orderErrorMessage,
+    setOrderErrorMessage,
   } = useRestaurant();
 
   const [activeCategory, setActiveCategory] = useState<ProductCategory | 'all'>('all');
@@ -468,6 +470,23 @@ export const WaiterView: React.FC = () => {
                     onChange={(e) => setOrderNotes(e.target.value)}
                     className="mt-1 w-full rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs focus:border-stone-900 focus:outline-none"
                   />
+                </div>
+              )}
+
+              {/* Error Banner if DB rejected order */}
+              {orderErrorMessage && (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-2.5 text-xs text-red-800 animate-in fade-in">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                  <div className="flex-1">
+                    <strong className="font-bold">Aviso de Base de Datos:</strong>
+                    <p className="mt-0.5 text-[11px] leading-snug">{orderErrorMessage}</p>
+                  </div>
+                  <button
+                    onClick={() => setOrderErrorMessage(null)}
+                    className="text-red-500 hover:text-red-800 font-black text-sm"
+                  >
+                    ×
+                  </button>
                 </div>
               )}
 

@@ -5,17 +5,22 @@ import { WaiterView } from './components/WaiterView';
 import { KitchenView } from './components/KitchenView';
 import { InventoryView } from './components/InventoryView';
 import { DatabaseModal } from './components/DatabaseModal';
-import { Flame, SplitSquareVertical, Smartphone, Monitor } from 'lucide-react';
+import { LoginModal } from './components/LoginModal';
+import { SplitSquareVertical, Lock } from 'lucide-react';
 
 const MainApp: React.FC = () => {
-  const { role, setRole } = useRestaurant();
+  const { role, currentUser } = useRestaurant();
   const [showDbModal, setShowDbModal] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const [splitView, setSplitView] = useState(false);
 
   return (
     <div className="min-h-screen bg-stone-100 text-stone-900 flex flex-col selection:bg-amber-500 selection:text-white">
       {/* Top Header */}
-      <Header onOpenDbModal={() => setShowDbModal(true)} />
+      <Header
+        onOpenDbModal={() => setShowDbModal(true)}
+        onOpenLoginModal={() => setShowLoginModal(true)}
+      />
 
       {/* Quick View Controls Bar for Testing */}
       <div className="bg-stone-200/70 border-b border-stone-200 px-4 py-1.5 text-xs text-stone-600">
@@ -25,6 +30,12 @@ const MainApp: React.FC = () => {
             <span className="rounded bg-white px-2 py-0.5 font-bold text-stone-900 shadow-2xs">
               {role === 'waiter' ? 'Salón / Meseros' : role === 'kitchen' ? 'Cocina KDS' : 'Inventario & BD'}
             </span>
+            {currentUser && (
+              <span className="hidden sm:inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900">
+                <Lock className="h-3 w-3" />
+                <span>{currentUser.nombre} ({currentUser.rol})</span>
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -39,9 +50,13 @@ const MainApp: React.FC = () => {
               <SplitSquareVertical className="h-3.5 w-3.5" />
               <span>{splitView ? 'Vista Individual' : 'Vista Dividida (Mesero + Cocina)'}</span>
             </button>
-            <span className="hidden sm:inline text-stone-600">
-              Prueba en tiempo real: los cambios se reflejan al instante.
-            </span>
+            <button
+              onClick={() => setShowLoginModal(true)}
+              className="flex items-center gap-1 rounded bg-white px-2 py-0.5 font-medium text-stone-700 hover:bg-stone-50 border border-stone-300 text-[11px]"
+            >
+              <Lock className="h-3 w-3 text-amber-600" />
+              <span>{currentUser ? 'Cambiar Usuario BD' : 'Iniciar Sesión'}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -85,6 +100,9 @@ const MainApp: React.FC = () => {
 
       {/* Database Modal */}
       <DatabaseModal isOpen={showDbModal} onClose={() => setShowDbModal(false)} />
+
+      {/* Login Modal */}
+      <LoginModal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} canClose={true} />
     </div>
   );
 };

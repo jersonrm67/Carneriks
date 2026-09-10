@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Product, Order, RestaurantTable, OrderStatus, UserRole, SystemEvent, DatabaseSyncStatus } from '../types';
+import { Product, Order, RestaurantTable, OrderStatus, UserRole, SystemEvent, DatabaseSyncStatus, AuthUser } from '../types';
 import { sounds } from '../services/sound';
 
 interface CartItem {
@@ -17,12 +17,14 @@ interface RestaurantContextType {
   orders: Order[];
   role: UserRole;
   userName: string;
+  currentUser: AuthUser | null;
   isConnected: boolean;
   dbStatus: DatabaseSyncStatus;
   selectedTable: number | null;
   cart: CartItem[];
   isMuted: boolean;
   activeFilter: string;
+  orderErrorMessage: string | null;
   setRole: (role: UserRole) => void;
   setUserName: (name: string) => void;
   setSelectedTable: (tableNum: number | null) => void;
@@ -37,6 +39,9 @@ interface RestaurantContextType {
   toggleMute: () => void;
   resetDemoData: () => Promise<void>;
   setActiveFilter: (filter: string) => void;
+  login: (usuario: string, contrasena: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
+  setOrderErrorMessage: (msg: string | null) => void;
 }
 
 const RestaurantContext = createContext<RestaurantContextType | undefined>(undefined);
@@ -47,17 +52,21 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [orders, setOrders] = useState<Order[]>([]);
   const [role, setRoleState] = useState<UserRole>('waiter');
   const [userName, setUserNameState] = useState<string>('Carlos M.');
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [selectedTable, setSelectedTable] = useState<number | null>(1);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [activeFilter, setActiveFilter] = useState<string>('all');
+  const [orderErrorMessage, setOrderErrorMessage] = useState<string | null>(null);
   const [dbStatus, setDbStatus] = useState<DatabaseSyncStatus>({
     connected: true,
-    driver: 'Carneriks-RealTime-Engine',
-    lastPingMs: 12,
+    driver: 'SQLite-Relational-ACID',
+    database: 'carneriks.sqlite',
+    lastPingMs: 4,
     activeConnections: 1,
     totalOrdersToday: 0,
+    tables: ['usuarios', 'mesas', 'platos', 'pedidos', 'detalle_pedidos'],
   });
 
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
@@ -74,6 +83,15 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (savedUser) {
       setUserNameState(savedUser);
     }
+    const savedAuth = localStorage.getItem('carneriks_auth_user');
+    if (savedAuth) {
+      try {
+        const parsed = JSON.parse(savedAuth);
+        setCurrentUser(parsed);
+      } catch (e) {
+        // ignore
+      }
+    }
   }, []);
 
   const setRole = (newRole: UserRole) => {
@@ -85,12 +103,51 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     } else if (newRole === 'waiter' && userName === 'Chef Marco') {
       setUserNameState('Carlos M.');
       localStorage.setItem('carneriks_user', 'Carlos M.');
+    } else if (newRole === 'admin') {
+      setUserNameState('Administrador');
+      localStorage.setItem('carneriks_user', 'Administrador');
     }
   };
 
   const setUserName = (name: string) => {
     setUserNameState(name);
     localStorage.setItem('carneriks_user', name);
+  };
+
+  const login = async (usuario: string, contrasena: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usuario, contrasena }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCurrentUser(data.user);
+        setUserNameState(data.user.nombre);
+        localStorage.setItem('carneriks_auth_user', JSON.stringify(data.user));
+        localStorage.setItem('carneriks_user', data.user.nombre);
+
+        // Adjust view role based on user role
+        if (data.user.rol === 'mesero') {
+          setRole('waiter');
+        } else if (data.user.rol === 'cocina') {
+          setRole('kitchen');
+        } else if (data.user.rol === 'administrador') {
+          setRole('admin');
+        }
+        return { success: true };
+      } else {
+        return { success: false, error: data.error || 'Credenciales inválidas' };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Error de conexión con el servidor' };
+    }
+  };
+
+  const logout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('carneriks_auth_user');
   };
 
   const toggleMute = () => {
@@ -235,57 +292,57 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           setDbStatus({
             connected: true,
             driver: data.driver,
+            database: data.database,
             lastPingMs: latency,
             activeConnections: data.activeConnections,
             totalOrdersToday: data.totalOrdersToday,
+            tables: data.tables,
           });
         }
-      } catch (err) {}
+      } catch (err) {
+        // server temporarily offline
+      }
     }, 10000);
 
     return () => {
-      clearInterval(pingInterval);
-      clearTimeout(reconnectTimeout);
       eventSource?.close();
+      clearTimeout(reconnectTimeout);
+      clearInterval(pingInterval);
       broadcastChannelRef.current?.close();
     };
   }, [fetchSnapshot, handleSystemEvent]);
 
   // Cart operations
   const addToCart = (item: CartItem) => {
-    sounds.playTap();
     setCart((prev) => {
-      // Check if identical item (same product + same doneness + same notes) exists
+      // Find if exact same product + doneness already in cart
       const existingIdx = prev.findIndex(
-        (it) =>
-          it.productId === item.productId &&
-          it.doneness === item.doneness &&
-          (it.notes || '') === (item.notes || '')
+        (c) => c.productId === item.productId && c.doneness === item.doneness
       );
-      if (existingIdx >= 0) {
-        const copy = [...prev];
-        copy[existingIdx].quantity += item.quantity;
-        return copy;
+      if (existingIdx > -1) {
+        const clone = [...prev];
+        clone[existingIdx].quantity += item.quantity;
+        return clone;
       }
       return [...prev, item];
     });
+    sounds.playTap();
   };
 
   const removeFromCart = (index: number) => {
+    setCart((prev) => prev.filter((_, i) => i !== index));
     sounds.playTap();
-    setCart((prev) => prev.filter((_, idx) => idx !== index));
   };
 
   const updateCartItemQty = (index: number, delta: number) => {
-    sounds.playTap();
     setCart((prev) => {
-      const copy = [...prev];
-      const newQty = copy[index].quantity + delta;
+      const clone = [...prev];
+      const newQty = clone[index].quantity + delta;
       if (newQty <= 0) {
-        return copy.filter((_, idx) => idx !== index);
+        return clone.filter((_, i) => i !== index);
       }
-      copy[index].quantity = newQty;
-      return copy;
+      clone[index].quantity = newQty;
+      return clone;
     });
   };
 
@@ -293,11 +350,12 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setCart([]);
   };
 
-  // Submit order to Kitchen
+  // Waiter send order to kitchen
   const sendOrder = async (orderNotes?: string): Promise<boolean> => {
     if (!selectedTable || cart.length === 0) return false;
 
     try {
+      setOrderErrorMessage(null);
       const payload = {
         tableNumber: selectedTable,
         waiterName: userName,
@@ -330,10 +388,14 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         sounds.playNewOrderChime();
         clearCart();
         return true;
+      } else {
+        const errData = await res.json();
+        setOrderErrorMessage(errData.error || 'Error al procesar el pedido en la base de datos.');
+        return false;
       }
-      return false;
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to send order:', e);
+      setOrderErrorMessage(e.message || 'Error de conexión con el servidor.');
       return false;
     }
   };
@@ -437,12 +499,14 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         orders,
         role,
         userName,
+        currentUser,
         isConnected,
         dbStatus,
         selectedTable,
         cart,
         isMuted,
         activeFilter,
+        orderErrorMessage,
         setRole,
         setUserName,
         setSelectedTable,
@@ -457,6 +521,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         toggleMute,
         resetDemoData,
         setActiveFilter,
+        login,
+        logout,
+        setOrderErrorMessage,
       }}
     >
       {children}
