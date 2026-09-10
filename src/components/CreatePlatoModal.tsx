@@ -79,7 +79,7 @@ export const CreatePlatoModal: React.FC<CreatePlatoModalProps> = ({ isOpen, onCl
             </div>
             <div>
               <h2 className="text-base font-black text-stone-900">Crear Plato en Base de Datos</h2>
-              <p className="text-xs text-stone-600">Se guardará en SQLite y se sincronizará con Firestore</p>
+              <p className="text-xs text-stone-600">Se guardará directamente en Firebase Cloud Firestore</p>
             </div>
           </div>
           <button

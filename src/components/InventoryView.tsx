@@ -35,6 +35,7 @@ export const InventoryView: React.FC = () => {
     updateTableStatus,
     deleteTable,
     orders,
+    createOrder,
     clearCompletedOrders,
     dbStatus,
     resetDemoData,
@@ -101,32 +102,37 @@ export const InventoryView: React.FC = () => {
 
     const randomMeat = meats[Math.floor(Math.random() * meats.length)];
     const randomSide = sides[Math.floor(Math.random() * sides.length)];
-
-    const payload = {
-      tableNumber: freeTable?.number || 1,
-      waiterName: 'Tablet Salón B',
-      items: [
-        {
-          productId: randomMeat?.id || products[0]?.id,
-          quantity: 1,
-          doneness: 'Término Medio',
-          notes: 'Enviado desde tablet remota de prueba',
-        },
-        randomSide
-          ? {
-              productId: randomSide.id,
-              quantity: 1,
-            }
-          : undefined,
-      ].filter(Boolean) as any[],
-      notes: 'Pedido de verificación de base de datos en tiempo real',
-    };
+    const meatPrice = randomMeat?.price || 32;
+    const sidePrice = randomSide?.price || 0;
 
     try {
-      await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+      await createOrder({
+        tableNumber: freeTable?.number || 1,
+        waiterName: 'Tablet Salón B',
+        items: [
+          {
+            id: `sim-${Date.now()}-1`,
+            productId: randomMeat?.id || products[0]?.id || '1',
+            productName: randomMeat?.name || 'Corte a la Parrilla',
+            quantity: 1,
+            unitPrice: meatPrice,
+            doneness: 'Término Medio',
+            notes: 'Enviado desde tablet remota de prueba',
+          },
+          ...(randomSide
+            ? [
+                {
+                  id: `sim-${Date.now()}-2`,
+                  productId: randomSide.id,
+                  productName: randomSide.name,
+                  quantity: 1,
+                  unitPrice: sidePrice,
+                },
+              ]
+            : []),
+        ],
+        totalAmount: meatPrice + sidePrice,
+        notes: 'Pedido de verificación en Firebase Firestore',
       });
     } catch (e) {
       console.error(e);
@@ -147,7 +153,7 @@ export const InventoryView: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-xs font-bold text-stone-900">Motor en Tiempo Real</h3>
-                <p className="text-[10px] text-stone-500">SSE + Broadcast Activo</p>
+                <p className="text-[10px] text-stone-500">Firebase Firestore Sync</p>
               </div>
             </div>
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800">
@@ -177,7 +183,7 @@ export const InventoryView: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-xs font-bold text-stone-900">Platos en Carta</h3>
-                <p className="text-[10px] text-stone-500">Base de Datos SQLite</p>
+                <p className="text-[10px] text-stone-500">Firebase Cloud Firestore</p>
               </div>
             </div>
             <span className="text-sm font-black text-stone-900">{products.length} platos</span>
@@ -295,7 +301,7 @@ export const InventoryView: React.FC = () => {
             }`}
           >
             <Database className="h-3.5 w-3.5 text-amber-500" />
-            <span>Explorador SQL & Tablas</span>
+            <span>Explorador Firestore</span>
           </button>
         </div>
 
@@ -306,7 +312,7 @@ export const InventoryView: React.FC = () => {
             className="flex items-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-amber-600/30 hover:bg-amber-700 active:scale-95 transition-all"
           >
             <Plus className="h-4 w-4" />
-            <span>Crear Nuevo Plato en BD</span>
+            <span>Crear Plato en Firestore</span>
           </button>
         )}
 
@@ -316,7 +322,7 @@ export const InventoryView: React.FC = () => {
             className="flex items-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-amber-600/30 hover:bg-amber-700 active:scale-95 transition-all"
           >
             <Plus className="h-4 w-4" />
-            <span>Agregar Mesa a BD</span>
+            <span>Agregar Mesa a Firestore</span>
           </button>
         )}
 
@@ -620,7 +626,7 @@ export const InventoryView: React.FC = () => {
           <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-sm font-bold text-stone-900">
-                Historial de Pedidos en Base de Datos (SQLite & Firestore)
+                Historial de Pedidos en Firebase Firestore
               </h2>
               <p className="text-xs text-stone-500">
                 Todas las comandas emitidas, con su desglose de platos, importes y estados operativos.

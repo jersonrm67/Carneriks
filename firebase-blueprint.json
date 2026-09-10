@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "platos": {
+      "title": "Platos",
+      "description": "Menú y catálogo de platos del restaurante con control de inventario y stock.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string", "enum": ["carnes", "entradas_guarniciones", "bebidas", "postres"] },
+        "price": { "type": "number" },
+        "stock": { "type": "number" },
+        "stockMinimo": { "type": "number" },
+        "isAvailable": { "type": "boolean" },
+        "supportsDoneness": { "type": "boolean" },
+        "cutWeight": { "type": "string" },
+        "badge": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "price", "stock", "isAvailable"]
+    },
+    "mesas": {
+      "title": "Mesas",
+      "description": "Distribución física y estado en tiempo real de las mesas del restaurante.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "number": { "type": "number" },
+        "capacity": { "type": "number" },
+        "status": { "type": "string", "enum": ["free", "occupied"] },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "number", "capacity", "status"]
+    },
+    "pedidos": {
+      "title": "Pedidos",
+      "description": "Comandas enviadas por meseros a cocina en tiempo real.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "number" },
+        "tableNumber": { "type": "number" },
+        "waiterName": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "preparing", "ready", "delivered", "cancelled"] },
+        "totalAmount": { "type": "number" },
+        "items": { "type": "array" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "orderNumber", "tableNumber", "waiterName", "status", "items", "createdAt"]
+    },
+    "usuarios": {
+      "title": "Usuarios",
+      "description": "Personal del restaurante (meseros, cocina, administradores).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nombre": { "type": "string" },
+        "usuario": { "type": "string" },
+        "contrasena": { "type": "string" },
+        "rol": { "type": "string", "enum": ["mesero", "cocina", "administrador"] },
+        "activo": { "type": "boolean" }
+      },
+      "required": ["id", "nombre", "usuario", "rol"]
+    }
+  },
+  "firestore": {
+    "collections": {
+      "platos": {
+        "schema": "platos",
+        "description": "Catálogo de platos y cortes a la parrilla con stock en Firestore"
+      },
+      "mesas": {
+        "schema": "mesas",
+        "description": "Mesas del salón con estado libre/ocupada en Firestore"
+      },
+      "pedidos": {
+        "schema": "pedidos",
+        "description": "Comandas y pedidos sincronizados en tiempo real mediante Firestore"
+      },
+      "usuarios": {
+        "schema": "usuarios",
+        "description": "Personal y cuentas de acceso en Firestore"
+      }
+    }
+  }
+}

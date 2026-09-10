@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDbModal, onOpenLoginModal 
           {/* Real-Time Status Pill */}
           <button
             onClick={onOpenDbModal}
-            title="Haz clic para ver el estado de la Base de Datos en tiempo real"
+            title="Base de datos única: Firebase Cloud Firestore"
             className="hidden items-center gap-1.5 rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-xs font-medium text-stone-700 hover:border-stone-300 hover:bg-stone-100 md:flex transition-colors"
           >
             <span className="relative flex h-2 w-2">
@@ -94,8 +94,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDbModal, onOpenLoginModal 
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500"></span>
               )}
             </span>
-            <span>{isConnected ? 'BD Conectada' : 'Reconectando...'}</span>
-            <span className="text-[10px] text-stone-700">({dbStatus.lastPingMs}ms)</span>
+            <span className="font-semibold text-stone-800">{isConnected ? 'Firebase Conectado' : 'Reconectando...'}</span>
+            <span className="text-[10px] text-amber-700 font-mono font-bold">({dbStatus.lastPingMs}ms)</span>
           </button>
         </div>
 

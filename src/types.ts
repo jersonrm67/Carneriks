@@ -14,6 +14,7 @@ export interface Product {
   cutWeight?: string; // e.g. "400g", "350g"
   badge?: string;
   stockMinimo?: number;
+  imageUrl?: string;
 }
 
 export interface OrderItem {
@@ -53,7 +54,7 @@ export interface RestaurantTable {
   dbEstado?: 'libre' | 'ocupada';
   activeOrderId?: string;
   waiterName?: string;
-  lastUpdated: string;
+  lastUpdated?: string;
 }
 
 export type UserRole = 'waiter' | 'kitchen' | 'admin';
@@ -63,7 +64,7 @@ export interface AuthUser {
   nombre: string;
   usuario: string;
   rol: 'mesero' | 'cocina' | 'administrador';
-  activo: number;
+  activo: boolean | number;
   fecha_creacion?: string;
 }
 

@@ -1,20 +1,32 @@
-import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Product, Order, RestaurantTable, OrderStatus, UserRole, SystemEvent, DatabaseSyncStatus, AuthUser } from '../types';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { Product, Order, RestaurantTable, OrderStatus, UserRole, DatabaseSyncStatus, AuthUser } from '../types';
 import { sounds } from '../services/sound';
 import {
-  syncOrderToFirestore,
-  syncOrderStatusToFirestore,
-  syncProductToFirestore,
-  syncTableToFirestore,
-  pingFirestore,
-} from '../services/firebaseSync';
+  initializeFirestoreIfNeeded,
+  subscribePlatos,
+  subscribeMesas,
+  subscribePedidos,
+  savePlatoToFirestore,
+  updatePlatoStockInFirestore,
+  deletePlatoFromFirestore,
+  saveMesaToFirestore,
+  updateMesaStatusInFirestore,
+  deleteMesaFromFirestore,
+  createPedidoInFirestore,
+  updatePedidoStatusInFirestore,
+  clearCompletedPedidosInFirestore,
+  resetDemoDataToFirebase,
+  authenticateWithFirestore,
+  pingFirestoreLive,
+} from '../services/firestoreService';
+import { firebaseConfig } from '../firebase';
 
 interface CartItem {
   productId: string;
   productName: string;
   quantity: number;
   unitPrice: number;
-  doneness?: string;
+  doneness?: any;
   notes?: string;
 }
 
@@ -77,7 +89,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [role, setRoleState] = useState<UserRole>('waiter');
   const [userName, setUserNameState] = useState<string>('Carlos M.');
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [isConnected, setIsConnected] = useState<boolean>(true);
   const [selectedTable, setSelectedTable] = useState<number | null>(1);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -85,19 +97,20 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [orderErrorMessage, setOrderErrorMessage] = useState<string | null>(null);
   const [dbStatus, setDbStatus] = useState<DatabaseSyncStatus>({
     connected: true,
-    driver: 'SQLite-Relational-ACID',
-    database: 'carneriks.sqlite',
-    lastPingMs: 4,
+    driver: 'Firebase Cloud Firestore',
+    database: firebaseConfig.projectId,
+    lastPingMs: 12,
     activeConnections: 1,
     totalOrdersToday: 0,
-    tables: ['usuarios', 'mesas', 'platos', 'pedidos', 'detalle_pedidos'],
+    tables: ['platos', 'mesas', 'pedidos', 'usuarios'],
     firebaseConnected: true,
-    firebaseProjectId: 'carneriks-b31a8',
+    firebaseProjectId: firebaseConfig.projectId,
   });
 
-  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
   const roleRef = useRef(role);
   roleRef.current = role;
+
+  const previousOrdersRef = useRef<Map<string, Order>>(new Map());
 
   // Load saved preferences if any
   useEffect(() => {
@@ -142,32 +155,26 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const login = async (usuario: string, contrasena: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ usuario, contrasena }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setCurrentUser(data.user);
-        setUserNameState(data.user.nombre);
-        localStorage.setItem('carneriks_auth_user', JSON.stringify(data.user));
-        localStorage.setItem('carneriks_user', data.user.nombre);
+      const result = await authenticateWithFirestore(usuario, contrasena);
+      if (result.success && result.user) {
+        setCurrentUser(result.user);
+        setUserNameState(result.user.nombre);
+        localStorage.setItem('carneriks_auth_user', JSON.stringify(result.user));
+        localStorage.setItem('carneriks_user', result.user.nombre);
 
-        // Adjust view role based on user role
-        if (data.user.rol === 'mesero') {
+        if (result.user.rol === 'mesero') {
           setRole('waiter');
-        } else if (data.user.rol === 'cocina') {
+        } else if (result.user.rol === 'cocina') {
           setRole('kitchen');
-        } else if (data.user.rol === 'administrador') {
+        } else if (result.user.rol === 'administrador') {
           setRole('admin');
         }
         return { success: true };
       } else {
-        return { success: false, error: data.error || 'Credenciales inválidas' };
+        return { success: false, error: result.error || 'Credenciales inválidas en Firebase' };
       }
     } catch (err: any) {
-      return { success: false, error: err.message || 'Error de conexión con el servidor' };
+      return { success: false, error: err.message || 'Error al conectar con Firebase' };
     }
   };
 
@@ -181,177 +188,101 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setIsMuted(!isMuted);
   };
 
-  // Initial fetch fallback
-  const fetchSnapshot = useCallback(async () => {
-    try {
-      const [prodRes, tableRes, orderRes] = await Promise.all([
-        fetch('/api/products'),
-        fetch('/api/tables'),
-        fetch('/api/orders'),
-      ]);
-      if (prodRes.ok && tableRes.ok && orderRes.ok) {
-        const prodData = await prodRes.json();
-        const tableData = await tableRes.json();
-        const orderData = await orderRes.json();
-        setProducts(prodData);
-        setTables(tableData);
-        setOrders(orderData);
-        setIsConnected(true);
-      }
-    } catch (e) {
-      console.warn('Initial fetch waiting for server...', e);
-    }
-  }, []);
-
-  // Handle incoming system events
-  const handleSystemEvent = useCallback((event: SystemEvent) => {
-    const currentRole = roleRef.current;
-
-    switch (event.type) {
-      case 'FULL_SYNC':
-        if (event.payload) {
-          setProducts(event.payload.products || []);
-          setTables(event.payload.tables || []);
-          setOrders(event.payload.orders || []);
-          setIsConnected(true);
-        }
-        break;
-
-      case 'ORDER_CREATED': {
-        const newOrder: Order = event.payload;
-        setOrders((prev) => {
-          if (prev.some((o) => o.id === newOrder.id)) return prev;
-          return [newOrder, ...prev];
-        });
-
-        // If in kitchen, play audible chime!
-        if (currentRole === 'kitchen') {
-          sounds.playNewOrderChime();
-        }
-        break;
-      }
-
-      case 'ORDER_STATUS_CHANGED': {
-        const updatedOrder: Order = event.payload;
-        setOrders((prev) =>
-          prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o))
-        );
-
-        // If order became ready and current user is waiter, notify waiter!
-        if (updatedOrder.status === 'ready' && currentRole === 'waiter') {
-          sounds.playOrderReadyChime();
-        }
-        break;
-      }
-
-      case 'INVENTORY_UPDATED':
-        if (Array.isArray(event.payload)) {
-          setProducts(event.payload);
-        }
-        break;
-
-      case 'TABLE_UPDATED': {
-        const updatedTable: RestaurantTable = event.payload;
-        if (updatedTable && updatedTable.number) {
-          setTables((prev) =>
-            prev.map((t) => (t.number === updatedTable.number ? updatedTable : t))
-          );
-        }
-        break;
-      }
-    }
-  }, []);
-
-  // Setup Server-Sent Events (SSE) + BroadcastChannel
+  // Primary live real-time connection to Firebase Firestore
   useEffect(() => {
-    fetchSnapshot();
+    // 1. Ensure initial seed data exists in Firestore
+    initializeFirestoreIfNeeded();
 
-    // Broadcast channel for instantaneous cross-tab sync in same browser
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      const channel = new BroadcastChannel('carneriks_realtime');
-      broadcastChannelRef.current = channel;
-      channel.onmessage = (msgEvent) => {
-        if (msgEvent.data) {
-          handleSystemEvent(msgEvent.data);
-        }
-      };
-    }
-
-    // Connect to Server-Sent Events
-    let eventSource: EventSource | null = null;
-    let reconnectTimeout: any = null;
-
-    function connectSSE() {
-      eventSource = new EventSource('/api/events');
-
-      eventSource.onopen = () => {
+    // 2. Real-time subscriber: Platos (Products)
+    const unsubPlatos = subscribePlatos(
+      (newProducts) => {
+        setProducts(newProducts);
         setIsConnected(true);
-      };
-
-      eventSource.onmessage = (e) => {
-        try {
-          const parsed = JSON.parse(e.data);
-          handleSystemEvent(parsed);
-          setIsConnected(true);
-        } catch (err) {
-          // heartbeat or ignore
-        }
-      };
-
-      eventSource.onerror = () => {
-        setIsConnected(false);
-        eventSource?.close();
-        reconnectTimeout = setTimeout(connectSSE, 3000);
-      };
-    }
-
-    connectSSE();
-
-    // Test Firebase Firestore connection on mount
-    pingFirestore().then((res) => {
-      if (res.ok) {
-        console.log('🔥 Firebase Firestore conectado a proyecto:', 'carneriks-b31a8');
+      },
+      (err) => {
+        console.warn('Firestore Platos sync notice:', err);
       }
-    });
+    );
 
-    // Poll DB status periodically
+    // 3. Real-time subscriber: Mesas (Tables)
+    const unsubMesas = subscribeMesas(
+      (newTables) => {
+        setTables(newTables);
+        setIsConnected(true);
+      },
+      (err) => {
+        console.warn('Firestore Mesas sync notice:', err);
+      }
+    );
+
+    // 4. Real-time subscriber: Pedidos (Orders)
+    const unsubPedidos = subscribePedidos(
+      (newOrders) => {
+        const prevMap = previousOrdersRef.current;
+        const currentRole = roleRef.current;
+
+        // Check for newly arrived orders to trigger kitchen sound
+        if (prevMap.size > 0) {
+          for (const ord of newOrders) {
+            const prev = prevMap.get(ord.id);
+            if (!prev) {
+              // Brand new order!
+              if (currentRole === 'kitchen' && (ord.status === 'pending' || ord.status === 'preparing')) {
+                sounds.playNewOrderChime();
+              }
+            } else if (prev.status !== ord.status) {
+              // Status changed!
+              if (ord.status === 'ready' && currentRole === 'waiter') {
+                sounds.playOrderReadyChime();
+              }
+            }
+          }
+        }
+
+        // Update previous orders map
+        const nextMap = new Map<string, Order>();
+        newOrders.forEach((o) => nextMap.set(o.id, o));
+        previousOrdersRef.current = nextMap;
+
+        setOrders(newOrders);
+        setIsConnected(true);
+        setDbStatus((prev) => ({
+          ...prev,
+          totalOrdersToday: newOrders.length,
+        }));
+      },
+      (err) => {
+        console.warn('Firestore Pedidos sync notice:', err);
+      }
+    );
+
+    // 5. Periodic Ping to update latency meter for Firebase
     const pingInterval = setInterval(async () => {
       try {
-        const start = performance.now();
-        const res = await fetch('/api/db-status');
-        if (res.ok) {
-          const data = await res.json();
-          const latency = Math.round(performance.now() - start);
-          setDbStatus((prev) => ({
-            ...prev,
-            connected: true,
-            driver: data.driver,
-            database: data.database,
-            lastPingMs: latency,
-            activeConnections: data.activeConnections,
-            totalOrdersToday: data.totalOrdersToday,
-            tables: data.tables,
-            firebaseConnected: true,
-            firebaseProjectId: 'carneriks-b31a8',
-          }));
-        }
+        const ping = await pingFirestoreLive();
+        setDbStatus((prev) => ({
+          ...prev,
+          connected: ping.connected,
+          lastPingMs: ping.latencyMs,
+          firebaseConnected: ping.connected,
+        }));
+        setIsConnected(ping.connected);
       } catch (err) {
-        // server temporarily offline
+        // quiet
       }
-    }, 10000);
+    }, 15000);
 
     return () => {
-      eventSource?.close();
-      clearTimeout(reconnectTimeout);
+      unsubPlatos();
+      unsubMesas();
+      unsubPedidos();
       clearInterval(pingInterval);
-      broadcastChannelRef.current?.close();
     };
-  }, [fetchSnapshot, handleSystemEvent]);
+  }, []);
 
   // Cart operations
   const addToCart = (item: CartItem) => {
     setCart((prev) => {
-      // Find if exact same product + doneness already in cart
       const existingIdx = prev.findIndex(
         (c) => c.productId === item.productId && c.doneness === item.doneness
       );
@@ -386,156 +317,81 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setCart([]);
   };
 
-  // Waiter send order to kitchen
+  // Waiter send order to kitchen directly in Firebase Firestore
   const sendOrder = async (orderNotes?: string): Promise<boolean> => {
     if (!selectedTable || cart.length === 0) return false;
 
     try {
       setOrderErrorMessage(null);
-      const payload = {
+      const totalAmount = cart.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+      const orderNumber = (orders.length > 0 ? Math.max(...orders.map((o) => o.orderNumber)) : 100) + 1;
+
+      const newOrder: Order = {
+        id: `ord-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        orderNumber,
         tableNumber: selectedTable,
         waiterName: userName,
-        items: cart.map((c) => ({
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        items: cart.map((c, idx) => ({
+          id: `item-${Date.now()}-${idx}`,
           productId: c.productId,
+          productName: c.productName,
           quantity: c.quantity,
+          unitPrice: c.unitPrice,
           doneness: c.doneness,
           notes: c.notes,
         })),
-        notes: orderNotes,
+        totalAmount,
+        notes: orderNotes || '',
       };
 
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        const created: Order = await res.json();
-        // Optimistically notify local broadcast channel
-        const evt: SystemEvent = {
-          type: 'ORDER_CREATED',
-          payload: created,
-          timestamp: new Date().toISOString(),
-        };
-        broadcastChannelRef.current?.postMessage(evt);
-        handleSystemEvent(evt);
-
-        // Synchronize in Firebase Firestore ('pedidos' collection)
-        syncOrderToFirestore(created).catch((e) => console.warn('Firestore sync background notice:', e));
-
-        sounds.playNewOrderChime();
-        clearCart();
-        return true;
-      } else {
-        const errData = await res.json();
-        setOrderErrorMessage(errData.error || 'Error al procesar el pedido en la base de datos.');
-        return false;
-      }
+      await createPedidoInFirestore(newOrder);
+      sounds.playNewOrderChime();
+      clearCart();
+      return true;
     } catch (e: any) {
-      console.error('Failed to send order:', e);
-      setOrderErrorMessage(e.message || 'Error de conexión con el servidor.');
+      console.error('Failed to send order to Firebase Firestore:', e);
+      setOrderErrorMessage(e.message || 'Error al guardar comanda en Firebase.');
       return false;
     }
   };
 
-  // Kitchen change order status
+  // Kitchen change order status in Firebase Firestore
   const updateOrderStatus = async (orderId: string, status: OrderStatus) => {
     try {
-      // Optimistic update
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, status } : o))
-      );
-
-      const res = await fetch(`/api/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-
-      if (res.ok) {
-        const updated: Order = await res.json();
-        const evt: SystemEvent = {
-          type: 'ORDER_STATUS_CHANGED',
-          payload: updated,
-          timestamp: new Date().toISOString(),
-        };
-        broadcastChannelRef.current?.postMessage(evt);
-        handleSystemEvent(evt);
-        sounds.playTap();
-
-        // Sync to Firestore
-        syncOrderStatusToFirestore(orderId, status).catch((e) => console.warn('Firestore update status notice:', e));
-      }
-    } catch (e) {
-      console.error('Failed to update order status:', e);
-    }
-  };
-
-  // Stock management
-  const updateStock = async (productId: string, stock: number, isAvailable: boolean) => {
-    try {
-      setProducts((prev) =>
-        prev.map((p) => (p.id === productId ? { ...p, stock, isAvailable } : p))
-      );
-
-      const res = await fetch(`/api/products/${productId}/stock`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stock, isAvailable }),
-      });
-
-      if (res.ok) {
-        const updatedProd: Product = await res.json();
-        const updatedList = products.map((p) => (p.id === updatedProd.id ? updatedProd : p));
-        const evt: SystemEvent = {
-          type: 'INVENTORY_UPDATED',
-          payload: updatedList,
-          timestamp: new Date().toISOString(),
-        };
-        broadcastChannelRef.current?.postMessage(evt);
-
-        // Sync to Firestore
-        syncProductToFirestore(updatedProd).catch((e) => console.warn('Firestore sync product notice:', e));
-      }
-    } catch (e) {
-      console.error('Failed to update stock:', e);
-    }
-  };
-
-  // Table status update
-  const updateTableStatus = async (tableNumber: number, status: RestaurantTable['status']) => {
-    try {
-      const res = await fetch(`/api/tables/${tableNumber}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        const evt: SystemEvent = {
-          type: 'TABLE_UPDATED',
-          payload: updated,
-          timestamp: new Date().toISOString(),
-        };
-        broadcastChannelRef.current?.postMessage(evt);
-        handleSystemEvent(evt);
-
-        // Sync to Firestore
-        syncTableToFirestore(updated).catch((e) => console.warn('Firestore sync table notice:', e));
-      }
-    } catch (e) {
-      console.error('Failed to update table:', e);
-    }
-  };
-
-  const resetDemoData = async () => {
-    try {
-      await fetch('/api/demo/reset', { method: 'POST' });
-      await fetchSnapshot();
+      await updatePedidoStatusInFirestore(orderId, status);
       sounds.playTap();
     } catch (e) {
-      console.error('Failed to reset demo:', e);
+      console.error('Failed to update order status in Firebase:', e);
+    }
+  };
+
+  // Stock management in Firebase Firestore
+  const updateStock = async (productId: string, stock: number, isAvailable: boolean) => {
+    try {
+      await updatePlatoStockInFirestore(productId, stock, isAvailable);
+    } catch (e) {
+      console.error('Failed to update stock in Firebase:', e);
+    }
+  };
+
+  // Table status update in Firebase Firestore
+  const updateTableStatus = async (tableNumber: number, status: RestaurantTable['status']) => {
+    try {
+      await updateMesaStatusInFirestore(tableNumber, status === 'occupied' ? 'occupied' : 'free');
+    } catch (e) {
+      console.error('Failed to update table status in Firebase:', e);
+    }
+  };
+
+  // Reset demo data in Firebase Firestore
+  const resetDemoData = async () => {
+    try {
+      await resetDemoDataToFirebase();
+      sounds.playTap();
+    } catch (e) {
+      console.error('Failed to reset demo in Firebase:', e);
     }
   };
 
@@ -560,118 +416,60 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const createProduct = async (data: any): Promise<Product | null> => {
     try {
-      const res = await fetch('/api/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) {
-        const created: Product = await res.json();
-        setProducts((prev) => [...prev.filter((p) => p.id !== created.id), created]);
-        const evt: SystemEvent = {
-          type: 'INVENTORY_UPDATED',
-          payload: [...products.filter((p) => p.id !== created.id), created],
-          timestamp: new Date().toISOString(),
-        };
-        broadcastChannelRef.current?.postMessage(evt);
-        syncProductToFirestore(created).catch((e) => console.warn('Firestore sync product notice:', e));
-        return created;
-      }
+      const created = await savePlatoToFirestore(data);
+      return created;
     } catch (err) {
-      console.error('Error creating product:', err);
+      console.error('Error creating product in Firebase:', err);
     }
     return null;
   };
 
   const updateProduct = async (id: string, data: any): Promise<Product | null> => {
     try {
-      const res = await fetch(`/api/products/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) {
-        const updated: Product = await res.json();
-        setProducts((prev) => prev.map((p) => (p.id === id ? updated : p)));
-        const evt: SystemEvent = {
-          type: 'INVENTORY_UPDATED',
-          payload: products.map((p) => (p.id === id ? updated : p)),
-          timestamp: new Date().toISOString(),
-        };
-        broadcastChannelRef.current?.postMessage(evt);
-        syncProductToFirestore(updated).catch((e) => console.warn('Firestore sync product notice:', e));
-        return updated;
-      }
+      const updated = await savePlatoToFirestore({ id, ...data });
+      return updated;
     } catch (err) {
-      console.error('Error updating product:', err);
+      console.error('Error updating product in Firebase:', err);
     }
     return null;
   };
 
   const deleteProduct = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/products/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setProducts((prev) => prev.filter((p) => p.id !== id));
-        const evt: SystemEvent = {
-          type: 'INVENTORY_UPDATED',
-          payload: products.filter((p) => p.id !== id),
-          timestamp: new Date().toISOString(),
-        };
-        broadcastChannelRef.current?.postMessage(evt);
-        return true;
-      }
+      await deletePlatoFromFirestore(id);
+      return true;
     } catch (err) {
-      console.error('Error deleting product:', err);
+      console.error('Error deleting product from Firebase:', err);
     }
     return false;
   };
 
   const createTable = async (numero: number, capacidad: number = 4): Promise<RestaurantTable | null> => {
     try {
-      const res = await fetch('/api/tables', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ number: numero, capacity: capacidad }),
-      });
-      if (res.ok) {
-        const created: RestaurantTable = await res.json();
-        setTables((prev) => {
-          const filtered = prev.filter((t) => t.number !== numero);
-          return [...filtered, created].sort((a, b) => a.number - b.number);
-        });
-        syncTableToFirestore(created).catch((e) => console.warn('Firestore sync table notice:', e));
-        return created;
-      }
+      const created = await saveMesaToFirestore(numero, capacidad);
+      return created;
     } catch (err) {
-      console.error('Error creating table:', err);
+      console.error('Error creating table in Firebase:', err);
     }
     return null;
   };
 
   const deleteTable = async (numero: number): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/tables/${numero}`, { method: 'DELETE' });
-      if (res.ok) {
-        setTables((prev) => prev.filter((t) => t.number !== numero));
-        return true;
-      }
+      await deleteMesaFromFirestore(numero);
+      return true;
     } catch (err) {
-      console.error('Error deleting table:', err);
+      console.error('Error deleting table from Firebase:', err);
     }
     return false;
   };
 
   const clearCompletedOrders = async (): Promise<number> => {
     try {
-      const res = await fetch('/api/pedidos/clear-completed', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        await fetchSnapshot();
-        return data.clearedCount || 0;
-      }
+      const clearedCount = await clearCompletedPedidosInFirestore();
+      return clearedCount;
     } catch (err) {
-      console.error('Error clearing completed orders:', err);
+      console.error('Error clearing completed orders from Firebase:', err);
     }
     return 0;
   };

@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Platos: Catálogo de platos y cortes del restaurante
+    match /platos/{platoId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Mesas: Gestión y estado de ocupación de las mesas
+    match /mesas/{mesaId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Pedidos: Comandas en tiempo real entre salón y cocina
+    match /pedidos/{pedidoId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Usuarios: Personal autorizado del restaurante
+    match /usuarios/{usuarioId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
